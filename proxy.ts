@@ -19,13 +19,13 @@ export async function proxy(request: NextRequest) {
       getAll() {
         return request.cookies.getAll();
       },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) =>
-          request.cookies.set(name, value),
-        );
+      setAll(cookiesToSet, headers) {
         response = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) =>
           response.cookies.set(name, value, options),
+        );
+        Object.entries(headers).forEach(([key, value]) =>
+          response.headers.set(key, value),
         );
       },
     },
@@ -35,14 +35,21 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  function withSessionCookies(next: NextResponse) {
+    response.cookies.getAll().forEach((cookie) => {
+      next.cookies.set(cookie.name, cookie.value);
+    });
+    return next;
+  }
+
   if (pathname.startsWith("/dashboard") && !user) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+    return withSessionCookies(NextResponse.redirect(loginUrl));
   }
 
   if ((pathname === "/login" || pathname === "/signup") && user) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
+    return withSessionCookies(NextResponse.redirect(new URL("/dashboard", request.url)));
   }
 
   return response;

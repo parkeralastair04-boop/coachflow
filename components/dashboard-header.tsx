@@ -25,7 +25,7 @@ export function DashboardHeader() {
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Overview</h1>
+      <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Dashboard</h1>
       <p className="text-muted mt-1 text-sm">
         {label ? `Signed in as ${label}` : "Signed in"}
       </p>

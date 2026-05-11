@@ -16,7 +16,7 @@ import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/players", label: "Players", icon: UserSquare2 },
   { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },

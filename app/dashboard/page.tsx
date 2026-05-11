@@ -43,7 +43,7 @@ export default function DashboardPage() {
               <span className="text-foreground font-medium">14</span> active subscriptions
             </p>
             <p className="text-muted mt-4 text-xs">
-              Placeholder CRM snapshot — wire to Supabase when your schema is ready.
+              Snapshot of trials, payments due, and active subscriptions for your academy.
             </p>
           </div>
         </section>
@@ -56,7 +56,7 @@ export default function DashboardPage() {
               <span className="text-foreground font-medium">2</span> failed renewals
             </p>
             <p className="text-muted mt-4 text-xs">
-              Connect your payments provider to replace this demo data.
+              Weekly collection and failed renewals at a glance.
             </p>
           </div>
         </section>
@@ -65,7 +65,7 @@ export default function DashboardPage() {
       <section id="settings" className="scroll-mt-24 space-y-4">
         <h2 className="text-lg font-semibold tracking-tight">Academy settings</h2>
         <div className="glass-panel rounded-2xl p-6 text-sm text-muted">
-          Branding, pitch availability, and staff roles will live here.
+          Configure branding, pitch availability, and staff roles from this section.
         </div>
       </section>
     </div>
