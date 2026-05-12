@@ -11,6 +11,9 @@ import {
   CreditCard,
   Settings,
   LogOut,
+  ClipboardList,
+  Tent,
+  Wallet,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -20,9 +23,11 @@ const nav = [
   { href: "/dashboard/players", label: "Players", icon: UserSquare2 },
   { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },
+  { href: "/dashboard/registers", label: "Registers", icon: ClipboardList },
+  { href: "/dashboard/camps", label: "Camps", icon: Tent },
+  { href: "/dashboard/payments", label: "Payments", icon: Wallet },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard#parents", label: "Parents", icon: Users },
-  { href: "/dashboard#payments", label: "Payments", icon: CreditCard },
   { href: "/dashboard#settings", label: "Settings", icon: Settings },
 ];
 
@@ -45,7 +50,10 @@ export function Sidebar() {
       </div>
       <nav className="flex flex-1 flex-col gap-1 p-3">
         {nav.map(({ href, label, icon: Icon }) => {
-          const active = pathname === href.split("#")[0];
+          const base = href.split("#")[0] ?? href;
+          const active =
+            pathname === base ||
+            (base !== "/dashboard" && pathname.startsWith(`${base}/`));
           return (
             <Link
               key={href}
