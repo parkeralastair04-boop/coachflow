@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { isFounder } from "@/lib/founders";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -19,6 +20,27 @@ function getErrorMessage(error: unknown): string {
 export function ManageBillingButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [founderAccess, setFounderAccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!cancelled && user?.email && isFounder(user.email)) {
+          setFounderAccess(true);
+        }
+      } catch {
+        if (!cancelled) setFounderAccess(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleOpenPortal() {
     setLoading(true);
@@ -52,6 +74,14 @@ export function ManageBillingButton() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (founderAccess) {
+    return (
+      <p className="text-muted text-sm leading-relaxed">
+        You have complimentary founder access.
+      </p>
+    );
   }
 
   return (

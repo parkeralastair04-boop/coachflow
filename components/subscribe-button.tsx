@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import type { PlanId } from "@/lib/billing";
+import { isFounder } from "@/lib/founders";
+import { cn } from "@/lib/utils";
 
 type SubscribeButtonProps = {
   planId: PlanId;
@@ -31,6 +33,27 @@ export function SubscribeButton({
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [founderAccess, setFounderAccess] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!cancelled && user?.email && isFounder(user.email)) {
+          setFounderAccess(true);
+        }
+      } catch {
+        if (!cancelled) setFounderAccess(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   async function handleSubscribe() {
     setLoading(true);
@@ -66,6 +89,22 @@ export function SubscribeButton({
     } finally {
       setLoading(false);
     }
+  }
+
+  if (founderAccess) {
+    return (
+      <p
+        className={cn(
+          "inline-flex min-h-11 w-full items-center justify-center rounded-full px-4 text-center text-sm font-medium",
+          highlighted
+            ? "text-accent bg-accent/10 ring-accent/25 ring-1"
+            : "text-muted border-border border",
+          className,
+        )}
+      >
+        You have complimentary founder access.
+      </p>
+    );
   }
 
   return (

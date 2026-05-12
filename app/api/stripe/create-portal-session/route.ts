@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
+import { isFounder } from "@/lib/founders";
 import { getStripeServerClient } from "@/lib/stripe";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 type PortalRequestBody = {
   customerEmail?: string;
@@ -15,6 +18,21 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "customerEmail is required." },
         { status: 400 },
+      );
+    }
+
+    let sessionEmail: string | null = null;
+    if (supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
+      const supabase = await createServerSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      sessionEmail = user?.email ?? null;
+    }
+    if (isFounder(customerEmail) || isFounder(sessionEmail)) {
+      return NextResponse.json(
+        { error: "You have complimentary founder access." },
+        { status: 403 },
       );
     }
 

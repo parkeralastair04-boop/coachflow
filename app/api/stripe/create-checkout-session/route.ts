@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { BILLING_PLANS } from "@/lib/billing";
+import { isFounder } from "@/lib/founders";
 import { getStripeServerClient } from "@/lib/stripe";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 type CheckoutRequestBody = {
   planId?: string;
@@ -12,6 +15,22 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CheckoutRequestBody;
+
+    let sessionEmail: string | null = null;
+    if (supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
+      const supabase = await createServerSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      sessionEmail = user?.email ?? null;
+    }
+    if (isFounder(sessionEmail) || isFounder(body.customerEmail)) {
+      return NextResponse.json(
+        { error: "You have complimentary founder access." },
+        { status: 403 },
+      );
+    }
+
     const selectedPlan = BILLING_PLANS.find((plan) => plan.id === body.planId);
     if (!selectedPlan) {
       return NextResponse.json({ error: "Invalid plan selected." }, { status: 400 });
