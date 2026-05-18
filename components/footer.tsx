@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 
 const footerLinks = [
   { label: "Features", href: "/#features" },
@@ -11,7 +12,9 @@ export function Footer() {
     <footer className="border-t border-black/[0.06] dark:border-white/[0.08]">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-12 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
         <div>
-          <p className="font-semibold tracking-tight">CoachFlow</p>
+          <Link href="/" className="inline-flex" aria-label="CoachFlow home">
+            <BrandLogo className="h-16" />
+          </Link>
           <p className="text-muted mt-1 max-w-sm text-sm">
             The operating system for football coaching businesses.
           </p>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import { cn } from "@/lib/utils";
 
 type NavbarProps = {
@@ -15,15 +16,13 @@ export function Navbar({ className, variant = "marketing" }: NavbarProps) {
         className,
       )}
     >
-      <nav className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:h-16 sm:px-6 lg:px-8">
+      <nav className="mx-auto flex h-20 max-w-6xl items-center justify-between px-4 sm:px-6 lg:px-8">
         <Link
           href="/"
-          className="flex items-center gap-2 font-semibold tracking-tight"
+          className="inline-flex items-center"
+          aria-label="CoachFlow home"
         >
-          <span className="flex size-8 items-center justify-center rounded-lg bg-accent/15 ring-1 ring-accent/35">
-            <span className="text-sm font-bold text-accent">CF</span>
-          </span>
-          <span>CoachFlow</span>
+          <BrandLogo className="h-16" priority />
         </Link>
 
         {variant === "marketing" ? (

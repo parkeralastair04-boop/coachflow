@@ -15,6 +15,7 @@ import {
   Tent,
   Wallet,
 } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -42,11 +43,10 @@ export function Sidebar() {
 
   return (
     <aside className="glass-panel flex w-full flex-col border-r border-black/[0.06] dark:border-white/[0.08] lg:fixed lg:inset-y-0 lg:w-60">
-      <div className="flex h-14 items-center gap-2 border-b border-black/[0.06] px-4 dark:border-white/[0.08] lg:h-16">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-accent/15 ring-1 ring-accent/35">
-          <span className="text-xs font-bold text-accent">CF</span>
-        </span>
-        <span className="font-semibold tracking-tight">CoachFlow</span>
+      <div className="flex h-16 items-center gap-2 border-b border-black/[0.06] px-4 dark:border-white/[0.08] lg:h-20">
+        <Link href="/dashboard" aria-label="CoachFlow dashboard">
+          <BrandLogo className="h-14" priority />
+        </Link>
       </div>
       <nav className="flex flex-1 flex-col gap-1 p-3">
         {nav.map(({ href, label, icon: Icon }) => {
