@@ -18,6 +18,7 @@ import {
   BellRing,
   Gift,
   Building2,
+  Bell,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import type { AcademyBranding } from "@/lib/academy-shared";
@@ -36,6 +37,7 @@ const nav = [
   { href: "/dashboard/registers", label: "Registers", icon: ClipboardList },
   { href: "/dashboard/camps", label: "Camps", icon: Tent },
   { href: "/dashboard/payments", label: "Payments", icon: Wallet },
+  { href: "/dashboard/settings/notifications", label: "Notifications", icon: Bell },
   { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
   { href: "/dashboard#parents", label: "Parents", icon: Users },
   { href: "/dashboard#settings", label: "Settings", icon: Settings },
