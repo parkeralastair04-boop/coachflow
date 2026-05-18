@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  Copy,
   CreditCard,
+  ExternalLink,
   Loader2,
   Mail,
   Phone,
@@ -111,6 +113,10 @@ export function PaymentsManager() {
   const [refreshing, setRefreshing] = useState(false);
   const [creatingCustomerId, setCreatingCustomerId] = useState<string | null>(null);
   const [creatingSubscription, setCreatingSubscription] = useState(false);
+  const [creatingCheckoutLink, setCreatingCheckoutLink] = useState(false);
+  const [sendingCheckoutLink, setSendingCheckoutLink] = useState(false);
+  const [checkoutUrl, setCheckoutUrl] = useState("");
+  const [copiedCheckoutLink, setCopiedCheckoutLink] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -217,6 +223,77 @@ export function PaymentsManager() {
       setError(getErrorMessage(caughtError));
     } finally {
       setCreatingSubscription(false);
+    }
+  }
+
+  function validateCheckoutInput() {
+    if (!selectedPlayerId) {
+      setError("Please choose a player.");
+      return null;
+    }
+
+    const amountInPence = Math.round(Number.parseFloat(amount) * 100);
+    if (!Number.isFinite(amountInPence) || amountInPence < 100) {
+      setError("Enter a valid amount of at least £1.00.");
+      return null;
+    }
+
+    return amountInPence;
+  }
+
+  async function createCheckoutLink(sendEmail = false) {
+    const amountInPence = validateCheckoutInput();
+    if (!amountInPence) return;
+
+    if (sendEmail) setSendingCheckoutLink(true);
+    else setCreatingCheckoutLink(true);
+    setSuccess(null);
+    setError(null);
+    setCopiedCheckoutLink(false);
+
+    try {
+      const response = await fetch("/api/payments/create-checkout-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId: selectedPlayerId,
+          amount: amountInPence,
+          interval,
+          sendEmail,
+        }),
+      });
+      const payload = (await response.json()) as {
+        url?: string;
+        emailed?: boolean;
+        error?: string;
+      };
+      if (!response.ok || !payload.url) {
+        setError(payload.error ?? "Could not create checkout link.");
+        return;
+      }
+
+      setCheckoutUrl(payload.url);
+      setSuccess(
+        payload.emailed
+          ? "Checkout link created and emailed to parent."
+          : "Checkout link created.",
+      );
+    } catch (caughtError: unknown) {
+      setError(getErrorMessage(caughtError));
+    } finally {
+      setCreatingCheckoutLink(false);
+      setSendingCheckoutLink(false);
+    }
+  }
+
+  async function copyCheckoutLink() {
+    if (!checkoutUrl) return;
+    try {
+      await navigator.clipboard.writeText(checkoutUrl);
+      setCopiedCheckoutLink(true);
+      setSuccess("Checkout link copied.");
+    } catch {
+      setError("Could not copy checkout link. Please copy it manually.");
     }
   }
 
@@ -360,6 +437,91 @@ export function PaymentsManager() {
             <span className="text-foreground font-medium">
               {selectedPlayer.parent_email ?? "Missing"}
             </span>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+        <div className="flex items-start gap-3">
+          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+            <ExternalLink className="text-accent size-5" aria-hidden />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">
+              Create Payment Link
+            </h2>
+            <p className="text-muted mt-1 text-sm">
+              Generate a secure Stripe Checkout URL parents can open to add
+              their payment method and start recurring payments.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <button
+            type="button"
+            onClick={() => void createCheckoutLink(false)}
+            disabled={creatingCheckoutLink || sendingCheckoutLink || !selectedPlayer}
+            className="bg-accent text-white hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
+          >
+            {creatingCheckoutLink ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                Creating...
+              </>
+            ) : (
+              <>
+                <ExternalLink className="mr-2 size-4" aria-hidden />
+                Create Payment Link
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => void createCheckoutLink(true)}
+            disabled={
+              creatingCheckoutLink ||
+              sendingCheckoutLink ||
+              !selectedPlayer?.parent_email
+            }
+            className="border-border hover:bg-black/[0.03] inline-flex h-11 items-center justify-center rounded-full border px-6 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+          >
+            {sendingCheckoutLink ? (
+              <>
+                <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                Sending...
+              </>
+            ) : (
+              <>
+                <Mail className="mr-2 size-4" aria-hidden />
+                Send by Email
+              </>
+            )}
+          </button>
+        </div>
+
+        {checkoutUrl ? (
+          <div className="mt-5 rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+            <p className="text-muted break-all text-sm">{checkoutUrl}</p>
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => void copyCheckoutLink()}
+                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+              >
+                <Copy className="mr-2 size-4" aria-hidden />
+                {copiedCheckoutLink ? "Copied" : "Copy Link"}
+              </button>
+              <a
+                href={checkoutUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity"
+              >
+                <ExternalLink className="mr-2 size-4" aria-hidden />
+                Open Link
+              </a>
+            </div>
           </div>
         ) : null}
       </section>
