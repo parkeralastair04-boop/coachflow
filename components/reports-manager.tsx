@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
+import { Check, Copy, FileDown, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
+import { generateReportPdf, getReportPdfFilename } from "@/lib/report-pdf";
 import { createClient } from "@/lib/supabase";
 
 type PlayerOption = {
@@ -42,10 +43,12 @@ export function ReportsManager() {
   const [generating, setGenerating] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
   const [sendingReport, setSendingReport] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [reportsError, setReportsError] = useState<string | null>(null);
@@ -150,6 +153,7 @@ export function ReportsManager() {
     setCopied(false);
     setSendSuccess(null);
     setSendError(null);
+    setPdfError(null);
 
     const selectedPlayer = players.find((player) => player.id === selectedPlayerId);
     if (!selectedPlayer) {
@@ -188,6 +192,7 @@ export function ReportsManager() {
       setReport(payload.report);
       setSendSuccess(null);
       setSendError(null);
+      setPdfError(null);
     } catch (caughtError: unknown) {
       setFormError(getErrorMessage(caughtError));
     } finally {
@@ -279,6 +284,40 @@ export function ReportsManager() {
       setSendError(getErrorMessage(caughtError));
     } finally {
       setSendingReport(false);
+    }
+  }
+
+  async function handleDownloadPdf() {
+    const selectedPlayer = players.find((player) => player.id === selectedPlayerId);
+    if (!selectedPlayer || !report.trim()) {
+      setPdfError("Generate a report first, then download it as a PDF.");
+      return;
+    }
+
+    setDownloadingPdf(true);
+    setPdfError(null);
+    try {
+      const date = new Date();
+      const pdfBytes = await generateReportPdf({
+        playerName: selectedPlayer.player_name,
+        report: report.trim(),
+        date,
+      });
+      const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+      new Uint8Array(pdfBuffer).set(pdfBytes);
+      const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = getReportPdfFilename(selectedPlayer.player_name, date);
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (caughtError: unknown) {
+      setPdfError(getErrorMessage(caughtError));
+    } finally {
+      setDownloadingPdf(false);
     }
   }
 
@@ -407,24 +446,44 @@ export function ReportsManager() {
         <section className="glass-panel rounded-2xl p-6 sm:p-8">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold tracking-tight">Generated report</h2>
-            <button
-              type="button"
-              onClick={() => void handleCopy()}
-              disabled={copying}
-              className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
-            >
-              {copied ? (
-                <>
-                  <Check className="size-4" aria-hidden />
-                  Copied
-                </>
-              ) : (
-                <>
-                  <Copy className="size-4" aria-hidden />
-                  {copying ? "Copying..." : "Copy to Clipboard"}
-                </>
-              )}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void handleDownloadPdf()}
+                disabled={downloadingPdf}
+                className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+              >
+                {downloadingPdf ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                    Preparing...
+                  </>
+                ) : (
+                  <>
+                    <FileDown className="size-4" aria-hidden />
+                    Download PDF
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCopy()}
+                disabled={copying}
+                className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-4" aria-hidden />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-4" aria-hidden />
+                    {copying ? "Copying..." : "Copy to Clipboard"}
+                  </>
+                )}
+              </button>
+            </div>
           </div>
           <p className="text-muted mt-4 whitespace-pre-wrap rounded-xl bg-black/[0.02] p-4 text-sm leading-relaxed dark:bg-white/[0.03]">
             {report}
@@ -469,6 +528,9 @@ export function ReportsManager() {
           ) : null}
           {sendError ? (
             <p className="mt-3 text-sm text-red-600 dark:text-red-400">{sendError}</p>
+          ) : null}
+          {pdfError ? (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{pdfError}</p>
           ) : null}
         </section>
       ) : null}
