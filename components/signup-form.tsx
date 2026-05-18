@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
 export function SignupForm({ className }: { className?: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const referralCode = searchParams.get("ref")?.trim() ?? "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,11 +41,22 @@ export function SignupForm({ className }: { className?: string }) {
         password,
         options: {
           emailRedirectTo: `${origin}/auth/callback`,
+          data: referralCode ? { referral_code: referralCode } : undefined,
         },
       });
       if (signErr) {
         setError(signErr.message);
         return;
+      }
+      if (data.user && referralCode) {
+        await fetch("/api/referrals/attribute", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            referralCode,
+            referredUserId: data.user.id,
+          }),
+        });
       }
       if (data.session) {
         router.replace("/dashboard");

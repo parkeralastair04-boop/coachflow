@@ -16,6 +16,7 @@ import {
   Wallet,
   BarChart3,
   BellRing,
+  Gift,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { createClient } from "@/lib/supabase";
@@ -25,6 +26,7 @@ const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/automations", label: "Automations", icon: BellRing },
+  { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
   { href: "/dashboard/players", label: "Players", icon: UserSquare2 },
   { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },

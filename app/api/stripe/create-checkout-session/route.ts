@@ -70,6 +70,24 @@ export async function POST(request: Request) {
       );
     }
 
+    if (sessionEmail && supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
+      const supabase = await createServerSupabaseClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        await supabase
+          .from("referrals")
+          .update({
+            status: "converted",
+            reward_type: "pro_month",
+            reward_value: 1,
+          })
+          .eq("referred_user_id", user.id)
+          .neq("status", "converted");
+      }
+    }
+
     return NextResponse.json({ url: session.url });
   } catch (error: unknown) {
     const message =
