@@ -6,9 +6,18 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cap:sync": "cap sync",
+    "cap:ios": "cap open ios",
+    "cap:android": "cap open android",
+    "cap:assets": "capacitor-assets generate --iconBackgroundColor '#0F172A' --splashBackgroundColor '#0F172A'"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "lucide-react": "^1.14.0",
