@@ -6,6 +6,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 export const FEATURE_KEYS = [
   "players",
   "sessions",
+  "analytics",
   "reports",
   "saved_reports",
   "group_registers",
@@ -25,6 +26,7 @@ export const FEATURE_ACCESS: Record<PlanId, readonly FeatureKey[]> = {
   pro: [
     "players",
     "sessions",
+    "analytics",
     "reports",
     "saved_reports",
     "group_registers",

@@ -14,6 +14,7 @@ import {
   ClipboardList,
   Tent,
   Wallet,
+  BarChart3,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import { createClient } from "@/lib/supabase";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/players", label: "Players", icon: UserSquare2 },
   { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },
