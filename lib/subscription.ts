@@ -8,6 +8,7 @@ export const FEATURE_KEYS = [
   "sessions",
   "analytics",
   "automations",
+  "insights",
   "reports",
   "saved_reports",
   "group_registers",

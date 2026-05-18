@@ -19,6 +19,7 @@ import {
   Gift,
   Building2,
   Bell,
+  Brain,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import type { AcademyBranding } from "@/lib/academy-shared";
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/dashboard/insights", label: "Insights", icon: Brain },
   { href: "/dashboard/automations", label: "Automations", icon: BellRing },
   { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
   { href: "/dashboard/academy", label: "Academy", icon: Building2 },
