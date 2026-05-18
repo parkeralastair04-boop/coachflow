@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasFeatureAccess } from "@/lib/subscription";
+import { getAcademyForUser } from "@/lib/academy";
 
 type SendReportBody = {
   playerId?: string;
@@ -106,6 +107,9 @@ export async function POST(request: Request) {
     const greeting = parentName ? `Hi ${escapeHtml(parentName)},` : "Hi,";
     const escapedPlayerName = escapeHtml(safePlayer.player_name);
     const subject = `Progress Report for ${safePlayer.player_name}`;
+    const academy = await getAcademyForUser(user.id);
+    const academyName = academy?.name ?? "CoachFlow";
+    const primaryColor = academy?.primary_color ?? "#10b981";
 
     const html = `<!doctype html>
 <html>
@@ -116,7 +120,7 @@ export async function POST(request: Request) {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td style="padding:28px 32px;background:#0f172a;color:#ffffff;">
-                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">CoachFlow</div>
+                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${primaryColor};">${escapeHtml(academyName)}</div>
                 <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">Progress Report for ${escapedPlayerName}</h1>
               </td>
             </tr>
@@ -124,7 +128,7 @@ export async function POST(request: Request) {
               <td style="padding:32px;">
                 <p style="margin:0 0 16px;color:#111827;line-height:1.65;">${greeting}</p>
                 <p style="margin:0 0 16px;color:#374151;line-height:1.65;">
-                  Here is your latest CoachFlow progress report for ${escapedPlayerName}, prepared to keep you updated on recent coaching focus, strengths, and next steps.
+                  Here is your latest ${escapeHtml(academyName)} progress report for ${escapedPlayerName}, prepared to keep you updated on recent coaching focus, strengths, and next steps.
                 </p>
                 <div style="margin:24px 0;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
                   ${reportToHtml(report)}
@@ -132,7 +136,7 @@ export async function POST(request: Request) {
                 <p style="margin:0 0 8px;color:#374151;line-height:1.65;">
                   Thanks for your continued support.
                 </p>
-                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">The CoachFlow Team</p>
+                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">The ${escapeHtml(academyName)} Team</p>
               </td>
             </tr>
           </table>
@@ -144,13 +148,13 @@ export async function POST(request: Request) {
 
     const text = `${parentName ? `Hi ${parentName},` : "Hi,"}
 
-Here is your latest CoachFlow progress report for ${safePlayer.player_name}.
+Here is your latest ${academyName} progress report for ${safePlayer.player_name}.
 
 ${reportToText(report)}
 
 Thanks for your continued support.
 
-The CoachFlow Team`;
+The ${academyName} Team`;
 
     const resend = getResendServerClient();
     const { data, error } = await resend.emails.send({

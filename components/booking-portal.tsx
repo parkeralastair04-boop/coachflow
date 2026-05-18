@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CalendarCheck, Loader2, Users } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
+import type { AcademyBranding } from "@/lib/academy-shared";
 import { cn } from "@/lib/utils";
 
 type ServiceType = "1-to-1" | "group" | "camp";
@@ -67,6 +68,7 @@ export function BookingPortal() {
   const [notes, setNotes] = useState("");
   const [redirectToCheckout, setRedirectToCheckout] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [academy, setAcademy] = useState<AcademyBranding | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -74,6 +76,29 @@ export function BookingPortal() {
     () => services.find((service) => service.id === selectedService) ?? services[0],
     [selectedService],
   );
+
+  useEffect(() => {
+    async function loadAcademyBranding() {
+      try {
+        const response = await fetch("/api/academy/public");
+        const payload = (await response.json()) as { academy?: AcademyBranding | null };
+        setAcademy(payload.academy ?? null);
+      } catch {
+        setAcademy(null);
+      }
+    }
+
+    void loadAcademyBranding();
+  }, []);
+
+  const academyName = academy?.name ?? "CoachFlow";
+  const brandStyle = academy
+    ? ({
+        "--accent": academy.primary_color,
+        "--accent-dim": `${academy.primary_color}24`,
+        "--ring-glow": `${academy.primary_color}66`,
+      } as React.CSSProperties)
+    : undefined;
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -122,10 +147,15 @@ export function BookingPortal() {
   }
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex min-h-full flex-col" style={brandStyle}>
       <header className="border-b border-black/[0.06] px-4 py-5 dark:border-white/[0.08] sm:px-6">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <BrandLogo className="h-16" priority />
+          <BrandLogo
+            src={academy?.logo_url ?? "/logo.png"}
+            alt={academyName}
+            className="h-16"
+            priority
+          />
           <a
             href="#booking-form"
             className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity"
@@ -146,7 +176,8 @@ export function BookingPortal() {
                 Book football coaching that fits your child.
               </h1>
               <p className="text-muted mt-6 max-w-xl text-lg leading-relaxed">
-                Choose 1-to-1 coaching, group sessions, or holiday camps. Submit your
+                Choose 1-to-1 coaching, group sessions, or holiday camps with{" "}
+                {academyName}. Submit your
                 child and parent details, then receive confirmation by email.
               </p>
               <div className="mt-8 flex flex-col gap-3 sm:flex-row">

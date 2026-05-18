@@ -2,6 +2,7 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { getStripeServerClient } from "@/lib/stripe";
+import { getPublicAcademyForCoach } from "@/lib/academy";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 type BookingBody = {
@@ -39,6 +40,8 @@ function confirmationHtml(args: {
   parentName: string;
   childName: string;
   serviceLabel: string;
+  academyName: string;
+  primaryColor: string;
 }) {
   const greeting = args.parentName ? `Hi ${args.parentName},` : "Hi,";
   return `<!doctype html>
@@ -50,7 +53,7 @@ function confirmationHtml(args: {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td style="padding:28px 32px;background:#0f172a;color:#ffffff;">
-                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">CoachFlow</div>
+                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${args.primaryColor};">${args.academyName}</div>
                 <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">Booking request received</h1>
               </td>
             </tr>
@@ -58,9 +61,9 @@ function confirmationHtml(args: {
               <td style="padding:32px;">
                 <p style="margin:0 0 16px;color:#111827;line-height:1.65;">${greeting}</p>
                 <p style="margin:0 0 16px;color:#374151;line-height:1.65;">
-                  Thanks for requesting ${args.serviceLabel} for ${args.childName}. Your booking is pending and the coaching team will confirm availability shortly.
+                  Thanks for requesting ${args.serviceLabel} for ${args.childName}. Your booking is pending and the ${args.academyName} team will confirm availability shortly.
                 </p>
-                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">CoachFlow</p>
+                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">${args.academyName}</p>
               </td>
             </tr>
           </table>
@@ -106,6 +109,10 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+
+    const academy = await getPublicAcademyForCoach(coachId);
+    const academyName = academy?.name ?? "CoachFlow";
+    const primaryColor = academy?.primary_color ?? "#10b981";
 
     const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
       auth: {
@@ -169,12 +176,14 @@ export async function POST(request: Request) {
           parentName: body.parentName?.trim() ?? "",
           childName,
           serviceLabel: service.label,
+          academyName,
+          primaryColor,
         }),
         text: `Hi${body.parentName ? ` ${body.parentName}` : ""},
 
-Thanks for requesting ${service.label} for ${childName}. Your booking is pending and the coaching team will confirm availability shortly.
+Thanks for requesting ${service.label} for ${childName}. Your booking is pending and the ${academyName} team will confirm availability shortly.
 
-CoachFlow`,
+${academyName}`,
       });
     } catch {
       // Booking should still succeed if email delivery is temporarily unavailable.

@@ -17,8 +17,10 @@ import {
   BarChart3,
   BellRing,
   Gift,
+  Building2,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
+import type { AcademyBranding } from "@/lib/academy-shared";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +29,7 @@ const nav = [
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/automations", label: "Automations", icon: BellRing },
   { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
+  { href: "/dashboard/academy", label: "Academy", icon: Building2 },
   { href: "/dashboard/players", label: "Players", icon: UserSquare2 },
   { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },
@@ -38,7 +41,7 @@ const nav = [
   { href: "/dashboard#settings", label: "Settings", icon: Settings },
 ];
 
-export function Sidebar() {
+export function Sidebar({ academy }: { academy?: AcademyBranding | null }) {
   const pathname = usePathname();
 
   async function handleSignOut() {
@@ -51,7 +54,12 @@ export function Sidebar() {
     <aside className="glass-panel flex w-full flex-col border-r border-black/[0.06] dark:border-white/[0.08] lg:fixed lg:inset-y-0 lg:w-60">
       <div className="flex h-16 items-center gap-2 border-b border-black/[0.06] px-4 dark:border-white/[0.08] lg:h-20">
         <Link href="/dashboard" aria-label="CoachFlow dashboard">
-          <BrandLogo className="h-14" priority />
+          <BrandLogo
+            src={academy?.logo_url ?? "/logo.png"}
+            alt={academy?.name ?? "CoachFlow"}
+            className="h-14"
+            priority
+          />
         </Link>
       </div>
       <nav className="flex flex-1 flex-col gap-1 p-3">
