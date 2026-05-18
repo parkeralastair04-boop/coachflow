@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, Sparkles, Trash2 } from "lucide-react";
+import { Check, Copy, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 
 type PlayerOption = {
@@ -41,8 +41,11 @@ export function ReportsManager() {
   const [loadingReports, setLoadingReports] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [savingReport, setSavingReport] = useState(false);
+  const [sendingReport, setSendingReport] = useState(false);
   const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [sendSuccess, setSendSuccess] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [reportsError, setReportsError] = useState<string | null>(null);
@@ -135,6 +138,8 @@ export function ReportsManager() {
 
   async function handlePlayerChange(playerId: string) {
     setSelectedPlayerId(playerId);
+    setSendSuccess(null);
+    setSendError(null);
     if (!coachId) return;
     await loadSavedReports(coachId, playerId);
   }
@@ -143,6 +148,8 @@ export function ReportsManager() {
     e.preventDefault();
     setFormError(null);
     setCopied(false);
+    setSendSuccess(null);
+    setSendError(null);
 
     const selectedPlayer = players.find((player) => player.id === selectedPlayerId);
     if (!selectedPlayer) {
@@ -179,6 +186,8 @@ export function ReportsManager() {
       }
 
       setReport(payload.report);
+      setSendSuccess(null);
+      setSendError(null);
     } catch (caughtError: unknown) {
       setFormError(getErrorMessage(caughtError));
     } finally {
@@ -235,6 +244,41 @@ export function ReportsManager() {
       setFormError("Could not copy report. Please copy manually.");
     } finally {
       setCopying(false);
+    }
+  }
+
+  async function handleSendReport() {
+    if (!selectedPlayerId || !report.trim()) {
+      setSendError("Generate a report first, then send it to the parent.");
+      return;
+    }
+
+    setSendingReport(true);
+    setSendSuccess(null);
+    setSendError(null);
+    try {
+      const response = await fetch("/api/send-report", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          playerId: selectedPlayerId,
+          report: report.trim(),
+        }),
+      });
+
+      const payload = (await response.json()) as { id?: string | null; error?: string };
+      if (!response.ok) {
+        setSendError(payload.error ?? "Could not send report.");
+        return;
+      }
+
+      setSendSuccess("Report sent to parent.");
+    } catch (caughtError: unknown) {
+      setSendError(getErrorMessage(caughtError));
+    } finally {
+      setSendingReport(false);
     }
   }
 
@@ -385,7 +429,7 @@ export function ReportsManager() {
           <p className="text-muted mt-4 whitespace-pre-wrap rounded-xl bg-black/[0.02] p-4 text-sm leading-relaxed dark:bg-white/[0.03]">
             {report}
           </p>
-          <div className="mt-4">
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={() => void handleSaveReport()}
@@ -401,7 +445,31 @@ export function ReportsManager() {
                 "Save Report"
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => void handleSendReport()}
+              disabled={sendingReport}
+              className="bg-accent text-white hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity disabled:opacity-60"
+            >
+              {sendingReport ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                  Sending...
+                </>
+              ) : (
+                <>
+                  <Mail className="mr-2 size-4" aria-hidden />
+                  Send to Parent
+                </>
+              )}
+            </button>
           </div>
+          {sendSuccess ? (
+            <p className="mt-3 text-sm text-accent">{sendSuccess}</p>
+          ) : null}
+          {sendError ? (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{sendError}</p>
+          ) : null}
         </section>
       ) : null}
 
