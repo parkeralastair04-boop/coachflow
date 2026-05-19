@@ -10,6 +10,7 @@ import {
   Save,
   Sparkles,
 } from "lucide-react";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import type { BusinessInsight, InsightsResponse } from "@/lib/insights";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
@@ -235,9 +236,12 @@ export function InsightsManager() {
     <div className="space-y-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            AI Business Insights
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              AI Business Insights
+            </h1>
+            <FeatureInfoTooltip featureKey="insights" />
+          </div>
           <p className="text-muted mt-1 max-w-2xl text-sm">
             Turn academy data into commercial priorities, retention warnings, and
             follow-up actions.

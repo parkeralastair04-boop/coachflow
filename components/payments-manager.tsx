@@ -13,6 +13,7 @@ import {
   RefreshCw,
   UserRound,
 } from "lucide-react";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import { cn } from "@/lib/utils";
 
 type BillingInterval = "monthly" | "weekly";
@@ -301,9 +302,12 @@ export function PaymentsManager() {
     <div className="space-y-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Parent payments
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              Parent payments
+            </h1>
+            <FeatureInfoTooltip featureKey="payments" />
+          </div>
           <p className="text-muted mt-1 text-sm">
             Create parent Stripe customers, assign recurring subscriptions to
             players, and spot failed payments quickly.

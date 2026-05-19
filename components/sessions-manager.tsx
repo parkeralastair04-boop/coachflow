@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarClock, Loader2, MapPin, Trash2 } from "lucide-react";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { createClient } from "@/lib/supabase";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
@@ -302,14 +303,11 @@ export function SessionsManager() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Session Scheduling
-        </h1>
-        <p className="text-muted mt-1 text-sm">
-          Plan sessions and track attendance across your coaching calendar.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="sessions"
+        title="Session Scheduling"
+        subtitle="Plan sessions and track attendance across your coaching calendar."
+      />
 
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <h2 className="text-lg font-semibold tracking-tight">Schedule session</h2>

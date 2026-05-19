@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Mail, Phone, Trash2, UserRound } from "lucide-react";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { createClient } from "@/lib/supabase";
 
 type PlayerRow = {
@@ -208,14 +209,11 @@ export function PlayersManager() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Player CRM
-        </h1>
-        <p className="text-muted mt-1 text-sm">
-          Manage your players and parent contacts in one place.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="players"
+        title="Player CRM"
+        subtitle="Manage your players and parent contacts in one place."
+      />
 
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <h2 className="text-lg font-semibold tracking-tight">Add player</h2>

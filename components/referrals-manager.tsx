@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Gift, Loader2, Mail, Share2, TrendingUp, Users } from "lucide-react";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { getSetupRequiredMessage } from "@/lib/supabase-errors";
 
@@ -160,16 +161,12 @@ export function ReferralsManager() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Referrals
-        </h1>
-        <p className="text-muted mt-1 max-w-2xl text-sm">
-          Invite other football coaches to CoachFlow. When a referred coach
-          becomes a paying customer, you earn one free month of Pro or equivalent
-          account credit.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="referrals"
+        title="Referrals"
+        subtitle="Invite other football coaches to CoachFlow. When a referred coach becomes a paying customer, you earn one free month of Pro or equivalent account credit."
+        subtitleClassName="max-w-2xl"
+      />
 
       {setupTables.length > 0 ? (
         <SetupRequiredPanel

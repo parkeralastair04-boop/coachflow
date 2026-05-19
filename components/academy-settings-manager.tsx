@@ -8,6 +8,7 @@ import {
   type AcademyBranding,
   type AcademyRole,
 } from "@/lib/academy-shared";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
 import {
@@ -256,15 +257,12 @@ export function AcademySettingsManager() {
   if (setupTables.length > 0) {
     return (
       <div className="space-y-10">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Academy Settings
-          </h1>
-          <p className="text-muted mt-1 max-w-2xl text-sm">
-            Configure white-label branding, domains, support details, and academy
-            membership for multi-coach teams.
-          </p>
-        </div>
+        <FeaturePageHeader
+          featureKey="academy"
+          title="Academy Settings"
+          subtitle="Configure white-label branding, domains, support details, and academy membership for multi-coach teams."
+          subtitleClassName="max-w-2xl"
+        />
         <SetupRequiredPanel
           {...getSetupRequiredMessage(setupTables)}
           tables={setupTables}
@@ -283,15 +281,12 @@ export function AcademySettingsManager() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Academy Settings
-        </h1>
-        <p className="text-muted mt-1 max-w-2xl text-sm">
-          Configure white-label branding, domains, support details, and academy
-          membership for multi-coach teams.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="academy"
+        title="Academy Settings"
+        subtitle="Configure white-label branding, domains, support details, and academy membership for multi-coach teams."
+        subtitleClassName="max-w-2xl"
+      />
 
       {error ? (
         <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">

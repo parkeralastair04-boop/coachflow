@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, Copy, FileDown, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { generateReportPdf, getReportPdfFilename } from "@/lib/report-pdf";
 import { createClient } from "@/lib/supabase";
 
@@ -358,14 +359,11 @@ export function ReportsManager() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          AI Progress Reports
-        </h1>
-        <p className="text-muted mt-1 text-sm">
-          Turn session notes into polished parent-ready updates in seconds.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="reports"
+        title="AI Progress Reports"
+        subtitle="Turn session notes into polished parent-ready updates in seconds."
+      />
 
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <h2 className="text-lg font-semibold tracking-tight">Generate report</h2>

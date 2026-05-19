@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, CalendarCheck, Loader2, Users } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import type { AcademyBranding } from "@/lib/academy-shared";
 import { cn } from "@/lib/utils";
 
@@ -169,8 +170,9 @@ export function BookingPortal() {
         <section className="mesh-gradient border-b border-black/[0.06] px-4 py-16 dark:border-white/[0.08] sm:px-6 lg:px-8 lg:py-24">
           <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
             <div>
-              <p className="text-accent mb-4 text-sm font-medium tracking-wide uppercase">
+              <p className="text-accent mb-4 flex items-center gap-2 text-sm font-medium tracking-wide uppercase">
                 Booking portal
+                <FeatureInfoTooltip featureKey="booking-portal" />
               </p>
               <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl">
                 Book football coaching that fits your child.

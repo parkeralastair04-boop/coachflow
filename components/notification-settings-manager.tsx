@@ -9,6 +9,7 @@ import {
   PUSH_NOTIFICATION_TYPES,
   type PushNotificationType,
 } from "@/lib/push-notifications";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
 import {
@@ -261,15 +262,12 @@ export function NotificationSettingsManager() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Notification Settings
-        </h1>
-        <p className="text-muted mt-1 max-w-2xl text-sm">
-          Register this device for native alerts and choose which CoachFlow
-          events should trigger push notifications.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="notifications"
+        title="Notification Settings"
+        subtitle="Register this device for native alerts and choose which CoachFlow events should trigger push notifications."
+        subtitleClassName="max-w-2xl"
+      />
 
       {setupTables.length > 0 ? (
         <SetupRequiredPanel

@@ -20,6 +20,7 @@ import {
   USER_GUIDE_URL,
   supportMailto,
 } from "@/lib/help-support";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import { cn } from "@/lib/utils";
 
 function SectionCard({
@@ -116,9 +117,12 @@ export function HelpSupportManager() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Help & Support
-        </h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            Help & Support
+          </h1>
+          <FeatureInfoTooltip featureKey="help-support" />
+        </div>
         <p className="text-muted mt-1 max-w-2xl text-sm">
           Guides, answers, and direct contact with the CoachFlow team.
         </p>

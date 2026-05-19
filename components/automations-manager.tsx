@@ -15,6 +15,7 @@ import {
   type AutomationRow,
   type AutomationType,
 } from "@/lib/automations";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
 import {
@@ -237,9 +238,12 @@ export function AutomationsManager() {
     <div className="space-y-10">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            CRM Automations
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              CRM Automations
+            </h1>
+            <FeatureInfoTooltip featureKey="automations" />
+          </div>
           <p className="text-muted mt-1 max-w-2xl text-sm">
             Turn routine parent communication into smart, branded notifications
             powered by CoachFlow and Resend.

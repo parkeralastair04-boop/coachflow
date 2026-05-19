@@ -9,6 +9,7 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
 import {
@@ -343,12 +344,11 @@ export function CampsManager() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Camps</h1>
-        <p className="text-muted mt-1 text-sm">
-          Create holiday blocks, set capacity and pricing, and track enrolments and waitlists.
-        </p>
-      </div>
+      <FeaturePageHeader
+        featureKey="camps"
+        title="Camps"
+        subtitle="Create holiday blocks, set capacity and pricing, and track enrolments and waitlists."
+      />
 
       {setupTables.length > 0 ? (
         <SetupRequiredPanel

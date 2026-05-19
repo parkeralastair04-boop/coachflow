@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   WifiOff,
 } from "lucide-react";
+import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 
@@ -477,9 +478,12 @@ export function RegistersManager() {
     <div className="space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Group Registers
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              Group Registers
+            </h1>
+            <FeatureInfoTooltip featureKey="registers" />
+          </div>
           <p className="text-muted mt-1 text-sm">
             Mark attendance on the pitch, keep working offline, and sync when
             signal returns.
