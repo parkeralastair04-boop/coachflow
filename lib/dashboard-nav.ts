@@ -128,12 +128,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         label: "Notification Settings",
         icon: Bell,
       },
-      {
-        href: "mailto:support@coachflow.website",
-        label: "Help & Support",
-        icon: HelpCircle,
-        external: true,
-      },
+      { href: "/dashboard/help", label: "Help & Support", icon: HelpCircle },
     ],
   },
 ];
