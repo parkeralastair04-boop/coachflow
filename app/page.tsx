@@ -51,7 +51,7 @@ export default function HomePage() {
     <div className="flex min-h-full flex-col">
       <Navbar />
       <main className="flex-1">
-        <section className="mesh-gradient relative overflow-hidden border-b border-black/[0.06] px-4 pt-16 pb-20 dark:border-white/[0.08] sm:px-6 sm:pt-20 lg:px-8 lg:pt-28">
+        <section className="mesh-gradient relative overflow-hidden border-border border-b px-4 pt-16 pb-20 sm:px-6 sm:pt-20 lg:px-8 lg:pt-28">
           <div className="mx-auto max-w-6xl">
             <p className="text-accent mb-4 text-sm font-medium tracking-wide uppercase">
               CoachFlow
@@ -73,7 +73,7 @@ export default function HomePage() {
               </Link>
               <Link
                 href="/login"
-                className="border-border text-foreground hover:bg-black/[0.03] inline-flex h-12 items-center justify-center rounded-full border px-8 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border text-foreground hover:bg-surface-hover inline-flex h-12 items-center justify-center rounded-full border px-8 text-sm font-medium transition-colors"
               >
                 Sign in
               </Link>
@@ -84,7 +84,7 @@ export default function HomePage() {
 
         <section
           id="features"
-          className="scroll-mt-20 border-b border-black/[0.06] px-4 py-20 dark:border-white/[0.08] sm:px-6 lg:px-8"
+          className="border-border scroll-mt-20 border-b px-4 py-20 sm:px-6 lg:px-8"
         >
           <div className="mx-auto max-w-6xl">
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
@@ -104,7 +104,7 @@ export default function HomePage() {
 
         <section
           id="pricing"
-          className="scroll-mt-20 border-b border-black/[0.06] px-4 py-20 dark:border-white/[0.08] sm:px-6 lg:px-8"
+          className="border-border scroll-mt-20 border-b px-4 py-20 sm:px-6 lg:px-8"
         >
           <div className="mx-auto max-w-6xl">
             <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">

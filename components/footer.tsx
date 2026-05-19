@@ -9,7 +9,7 @@ const footerLinks = [
 
 export function Footer() {
   return (
-    <footer className="border-t border-black/[0.06] dark:border-white/[0.08]">
+    <footer className="border-t border-border">
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-12 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
         <div>
           <Link href="/" className="inline-flex" aria-label="CoachFlow home">

@@ -5,6 +5,7 @@ import { Menu, X } from "lucide-react";
 import type { AcademyBranding } from "@/lib/academy-shared";
 import type { FeatureKey } from "@/lib/subscription";
 import { Sidebar } from "@/components/sidebar";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 type DashboardShellProps = {
@@ -22,23 +23,23 @@ export function DashboardShell({
 
   return (
     <div className="bg-background min-h-full lg:flex">
-      <div className="glass-panel sticky top-0 z-40 flex items-center justify-between border-b border-black/[0.06] px-4 py-3 dark:border-white/[0.08] lg:hidden">
+      <div className="glass-panel border-border sticky top-0 z-40 flex items-center justify-between border-b px-4 py-3 lg:hidden">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
-          className="text-muted hover:text-foreground inline-flex size-10 items-center justify-center rounded-xl transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+          className="text-muted hover:text-foreground hover:bg-surface-hover inline-flex size-10 items-center justify-center rounded-xl transition-colors"
           aria-label="Open navigation menu"
         >
           <Menu className="size-5" aria-hidden />
         </button>
         <p className="text-sm font-semibold tracking-tight">CoachFlow</p>
-        <div className="size-10" aria-hidden />
+        <ThemeToggle />
       </div>
 
       {mobileOpen ? (
         <button
           type="button"
-          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] lg:hidden"
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] lg:hidden dark:bg-black/60"
           aria-label="Close navigation menu"
           onClick={() => setMobileOpen(false)}
         />
@@ -60,7 +61,7 @@ export function DashboardShell({
             <button
               type="button"
               onClick={() => setMobileOpen(false)}
-              className="text-muted hover:text-foreground ml-auto inline-flex size-9 items-center justify-center rounded-lg transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06] lg:hidden"
+              className="text-muted hover:text-foreground hover:bg-surface-hover ml-auto inline-flex size-9 items-center justify-center rounded-lg transition-colors lg:hidden"
               aria-label="Close navigation menu"
             >
               <X className="size-5" aria-hidden />

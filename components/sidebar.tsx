@@ -100,7 +100,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className="glass-panel flex h-full w-full flex-col border-r border-black/[0.06] dark:border-white/[0.08] lg:fixed lg:inset-y-0 lg:w-60">
+    <aside className="glass-panel flex h-full w-full flex-col border-r border-border lg:fixed lg:inset-y-0 lg:w-60">
       <div className="flex min-h-[4.5rem] items-center gap-2 border-b border-black/[0.06] px-4 py-3 dark:border-white/[0.08] lg:min-h-[5rem]">
         <Link
           href="/dashboard"
@@ -138,7 +138,7 @@ export function Sidebar({
         <button
           type="button"
           onClick={() => void handleSignOut()}
-          className="text-muted hover:text-foreground flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+          className="text-muted hover:text-foreground flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors hover:bg-surface-hover"
         >
           <LogOut className="size-4 shrink-0" aria-hidden />
           Sign out

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 type NavbarProps = {
@@ -12,7 +13,7 @@ export function Navbar({ className, variant = "marketing" }: NavbarProps) {
     <header
       className={cn(
         "sticky top-0 z-50 border-b backdrop-blur-xl",
-        "border-black/[0.06] bg-background/75 dark:border-white/[0.08] dark:bg-background/70",
+        "border-border bg-background/80",
         className,
       )}
     >
@@ -35,7 +36,8 @@ export function Navbar({ className, variant = "marketing" }: NavbarProps) {
                 </a>
               </li>
             </ul>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <ThemeToggle />
               <Link
                 href="/login"
                 className="text-muted hover:text-foreground hidden text-sm transition-colors sm:inline"
