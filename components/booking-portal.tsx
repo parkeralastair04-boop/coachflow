@@ -153,7 +153,7 @@ export function BookingPortal() {
           <BrandLogo
             src={academy?.logo_url ?? "/logo.png"}
             alt={academyName}
-            className="h-16"
+            size="navbar"
             priority
           />
           <a
@@ -170,7 +170,7 @@ export function BookingPortal() {
           <div className="mx-auto grid max-w-6xl gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
             <div>
               <p className="text-accent mb-4 text-sm font-medium tracking-wide uppercase">
-                CoachFlow Booking Portal
+                Booking portal
               </p>
               <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl lg:text-6xl">
                 Book football coaching that fits your child.

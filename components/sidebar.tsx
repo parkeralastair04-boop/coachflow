@@ -56,12 +56,12 @@ export function Sidebar({ academy }: { academy?: AcademyBranding | null }) {
 
   return (
     <aside className="glass-panel flex w-full flex-col border-r border-black/[0.06] dark:border-white/[0.08] lg:fixed lg:inset-y-0 lg:w-60">
-      <div className="flex h-16 items-center gap-2 border-b border-black/[0.06] px-4 dark:border-white/[0.08] lg:h-20">
-        <Link href="/dashboard" aria-label="CoachFlow dashboard">
+      <div className="flex min-h-[4.5rem] items-center border-b border-black/[0.06] px-4 py-3 dark:border-white/[0.08] lg:min-h-[5rem]">
+        <Link href="/dashboard" className="inline-flex items-center" aria-label="CoachFlow dashboard">
           <BrandLogo
             src={academy?.logo_url ?? "/logo.png"}
             alt={academy?.name ?? "CoachFlow"}
-            className="h-14"
+            size="sidebar"
             priority
           />
         </Link>

@@ -373,15 +373,15 @@ export function AcademySettingsManager() {
 
           <div className="sm:col-span-2">
             <label className="mb-2 block text-sm font-medium">Logo upload</label>
-            <div className="flex flex-col gap-4 rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03] sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               {academy.logo_url ? (
                 <Image
                   src={academy.logo_url}
                   alt={`${academy.name} logo`}
-                  width={160}
-                  height={90}
+                  width={512}
+                  height={342}
                   unoptimized={academy.logo_url.startsWith("http")}
-                  className="h-16 w-auto object-contain"
+                  className="h-16 w-auto shrink-0 object-contain"
                 />
               ) : (
                 <div className="text-muted text-sm">No academy logo uploaded.</div>

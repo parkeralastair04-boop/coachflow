@@ -18,14 +18,12 @@ function LoginFormFallback() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-full flex-col">
-      <header className="border-b border-black/[0.06] px-4 py-4 dark:border-white/[0.08] sm:px-6">
-        <Link href="/" className="inline-flex" aria-label="CoachFlow home">
-          <BrandLogo className="h-10" priority />
+    <div className="mesh-gradient flex min-h-full flex-col">
+      <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 sm:px-6 sm:py-16">
+        <Link href="/" className="mb-10 inline-flex" aria-label="CoachFlow home">
+          <BrandLogo size="auth" priority />
         </Link>
-      </header>
-      <div className="mesh-gradient flex flex-1 items-center justify-center px-4 py-16 sm:px-6">
-        <div className="glass-panel w-full max-w-md rounded-2xl p-8 shadow-lg sm:p-10">
+        <div className="glass-panel w-full max-w-md rounded-2xl p-8 sm:p-10">
           <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
           <p className="text-muted mt-2 text-sm">
             Sign in to manage your coaching business.

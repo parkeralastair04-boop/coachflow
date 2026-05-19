@@ -13,7 +13,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-12 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
         <div>
           <Link href="/" className="inline-flex" aria-label="CoachFlow home">
-            <BrandLogo className="h-16" />
+            <BrandLogo size="footer" />
           </Link>
           <p className="text-muted mt-1 max-w-sm text-sm">
             The operating system for football coaching businesses.

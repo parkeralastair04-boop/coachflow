@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, X } from "lucide-react";
+import { X } from "lucide-react";
+import { BrandLogo } from "@/components/brand-logo";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -89,13 +90,9 @@ export function PwaInstallBanner() {
     <div className="fixed right-4 bottom-4 z-[60] max-w-sm">
       <div className="glass-panel rounded-2xl p-4 shadow-2xl">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/25 flex size-10 shrink-0 items-center justify-center rounded-xl ring-1">
-            <Download className="text-accent size-5" aria-hidden />
-          </div>
+          <BrandLogo size="pwaBanner" className="shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold tracking-tight">
-              Install CoachFlow
-            </p>
+            <p className="text-sm font-semibold tracking-tight">Install on your device</p>
             <p className="text-muted mt-1 text-xs leading-relaxed">
               Add CoachFlow to your device for quick access and offline-ready
               dashboard pages.
