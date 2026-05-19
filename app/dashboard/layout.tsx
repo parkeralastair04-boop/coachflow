@@ -1,7 +1,12 @@
 import { redirect } from "next/navigation";
 import { AcademyBrandShell } from "@/components/academy-brand-shell";
-import { Sidebar } from "@/components/sidebar";
+import { DashboardShell } from "@/components/dashboard-shell";
 import { getAcademyForUser } from "@/lib/academy";
+import {
+  FEATURE_KEYS,
+  getCurrentSubscription,
+  planHasFeature,
+} from "@/lib/subscription";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -23,18 +28,24 @@ export default async function DashboardLayout({
     redirect("/login?next=/dashboard");
   }
 
-  const academy = await getAcademyForUser(user.id);
+  const [academy, subscription] = await Promise.all([
+    getAcademyForUser(user.id),
+    getCurrentSubscription(),
+  ]);
+
+  const effectivePlan = subscription?.effectivePlan ?? "starter";
+  const enabledFeatures = FEATURE_KEYS.filter((key) =>
+    planHasFeature(effectivePlan, key),
+  );
 
   return (
     <AcademyBrandShell academy={academy}>
-      <div className="bg-background min-h-full lg:flex">
-        <Sidebar academy={academy} />
-        <div className="flex min-h-screen w-full flex-1 flex-col lg:pl-[15rem]">
-          <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
-            {children}
-          </main>
-        </div>
-      </div>
+      <DashboardShell
+        academy={academy}
+        enabledFeatures={enabledFeatures}
+      >
+        {children}
+      </DashboardShell>
     </AcademyBrandShell>
   );
 }
