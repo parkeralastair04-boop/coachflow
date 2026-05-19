@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
+import { DashboardPreviewMockup } from "@/components/dashboard-preview-mockup";
 import { FeatureCard } from "@/components/feature-card";
 import { PricingCard } from "@/components/pricing-card";
 import { BILLING_PLANS } from "@/lib/billing";
@@ -77,15 +78,7 @@ export default function HomePage() {
                 Sign in
               </Link>
             </div>
-            <div className="glass-panel mt-16 overflow-hidden rounded-2xl p-4 sm:p-6">
-              <div className="from-accent/8 via-transparent to-accent/5 relative aspect-[21/9] min-h-[200px] rounded-xl bg-gradient-to-br ring-1 ring-black/[0.06] dark:ring-white/[0.08]">
-                <div className="absolute inset-4 rounded-lg border border-dashed border-black/[0.08] dark:border-white/[0.12]" />
-                <p className="text-muted absolute bottom-6 left-6 text-xs sm:text-sm">
-                  Dashboard preview · Connect Supabase to enable live auth and
-                  data.
-                </p>
-              </div>
-            </div>
+            <DashboardPreviewMockup />
           </div>
         </section>
 
