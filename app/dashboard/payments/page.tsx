@@ -8,11 +8,7 @@ export const metadata: Metadata = {
 
 export default function PaymentsPage() {
   return (
-    <FeatureGate
-      feature="parent_payments"
-      title="Parent payments"
-      description="Instalments, mandates, and payout visibility for families are included on CoachFlow Academy."
-    >
+    <FeatureGate feature="parent_payments">
       <PaymentsManager />
     </FeatureGate>
   );

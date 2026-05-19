@@ -8,11 +8,7 @@ export const metadata: Metadata = {
 
 export default function InsightsPage() {
   return (
-    <FeatureGate
-      feature="insights"
-      title="AI business insights"
-      description="AI business insights are included on CoachFlow Academy."
-    >
+    <FeatureGate feature="insights">
       <InsightsManager />
     </FeatureGate>
   );

@@ -43,9 +43,9 @@ export const FEATURE_INFO: Record<FeatureInfoKey, FeatureInfoEntry> = {
   },
   registers: {
     title: "Group Registers",
-    what: "Mark attendance on mobile, work offline on the pitch, and sync marks when connectivity returns.",
+    what: "Mark attendance on mobile. Academy plans also sync offline marks when connectivity returns.",
     why: "Fast roll calls reduce admin after training and feed accurate attendance into player history.",
-    usage: "Open the register before each session, tap present/absent, and sync before leaving the venue if you were offline.",
+    usage: "Open the register before each session and tap present or absent. Academy coaches can work offline on the pitch.",
     includedIn: ["pro", "academy"],
   },
   camps: {

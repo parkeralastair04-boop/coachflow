@@ -8,11 +8,7 @@ export const metadata: Metadata = {
 
 export default function CampsPage() {
   return (
-    <FeatureGate
-      feature="camps"
-      title="Holiday camps & blocks"
-      description="Camp management is included on CoachFlow Academy. Upgrade to create blocks, capacity, and parent-ready pricing."
-    >
+    <FeatureGate feature="camps">
       <CampsManager />
     </FeatureGate>
   );

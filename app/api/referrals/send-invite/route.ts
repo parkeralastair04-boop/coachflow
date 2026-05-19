@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
 import { getReferralCode, getReferralUrl } from "@/lib/referrals";
+import { hasFeatureAccess } from "@/lib/subscription";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { getSetupRequiredMessage, isMissingTableError } from "@/lib/supabase-errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -23,6 +25,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "You must be signed in to send referral invites." },
         { status: 401 },
+      );
+    }
+
+    const allowed = await hasFeatureAccess("referrals");
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: "Referrals require a higher CoachFlow plan.",
+          requiredPlan: getMinimumPlanForGateFeature("referrals"),
+        },
+        { status: 403 },
       );
     }
 

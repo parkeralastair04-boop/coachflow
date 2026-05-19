@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { FeatureGate } from "@/components/feature-gate";
 import { ReferralsManager } from "@/components/referrals-manager";
 
 export const metadata: Metadata = {
@@ -6,5 +7,9 @@ export const metadata: Metadata = {
 };
 
 export default function ReferralsPage() {
-  return <ReferralsManager />;
+  return (
+    <FeatureGate feature="referrals">
+      <ReferralsManager />
+    </FeatureGate>
+  );
 }

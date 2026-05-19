@@ -57,7 +57,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         href: "/dashboard/registers",
         label: "Registers",
         icon: ClipboardList,
-        feature: "offline_registers",
+        feature: "group_registers",
       },
       { href: "/dashboard/camps", label: "Camps", icon: Tent, feature: "camps" },
       { href: "/book", label: "Bookings", icon: CalendarCheck, external: true },
@@ -87,6 +87,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         href: "/dashboard/settings/notifications",
         label: "Notifications",
         icon: Bell,
+        feature: "push_notifications",
       },
     ],
   },
@@ -108,7 +109,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         icon: BarChart3,
         feature: "analytics",
       },
-      { href: "/dashboard/referrals", label: "Referrals", icon: Gift },
+      { href: "/dashboard/referrals", label: "Referrals", icon: Gift, feature: "referrals" },
     ],
   },
   {
@@ -116,7 +117,12 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     title: "Academy",
     icon: Building2,
     items: [
-      { href: "/dashboard/academy", label: "Academy Settings", icon: Building2 },
+      {
+        href: "/dashboard/academy",
+        label: "Academy Settings",
+        icon: Building2,
+        feature: "white_label",
+      },
     ],
   },
   {
@@ -128,6 +134,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         href: "/dashboard/settings/notifications",
         label: "Notification Settings",
         icon: Bell,
+        feature: "push_notifications",
       },
       {
         href: "/dashboard/settings/appearance",

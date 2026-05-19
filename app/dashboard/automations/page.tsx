@@ -8,11 +8,7 @@ export const metadata: Metadata = {
 
 export default function AutomationsPage() {
   return (
-    <FeatureGate
-      feature="automations"
-      title="CRM automations"
-      description="Smart notifications and CRM automations are included on CoachFlow Pro and Academy."
-    >
+    <FeatureGate feature="automations">
       <AutomationsManager />
     </FeatureGate>
   );

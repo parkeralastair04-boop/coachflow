@@ -8,11 +8,7 @@ export const metadata: Metadata = {
 
 export default function RegistersPage() {
   return (
-    <FeatureGate
-      feature="offline_registers"
-      title="Offline registers"
-      description="Offline-first group registers are included on CoachFlow Academy."
-    >
+    <FeatureGate feature="group_registers">
       <RegistersManager />
     </FeatureGate>
   );

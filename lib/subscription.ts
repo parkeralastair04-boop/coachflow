@@ -1,42 +1,17 @@
 import type { PlanId } from "@/lib/billing";
 import { getAccountBillingAccess } from "@/lib/founders";
+import {
+  buildFeatureAccess,
+  planMeetsMinimum,
+  type FeatureKey,
+} from "@/lib/feature-definitions";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
-export const FEATURE_KEYS = [
-  "players",
-  "sessions",
-  "analytics",
-  "automations",
-  "insights",
-  "reports",
-  "saved_reports",
-  "group_registers",
-  "camps",
-  "offline_registers",
-  "parent_emails",
-  "parent_payments",
-] as const;
+export { FEATURE_KEYS, type FeatureKey } from "@/lib/feature-definitions";
 
-export type FeatureKey = (typeof FEATURE_KEYS)[number];
-
-const ALL_FEATURES: readonly FeatureKey[] = [...FEATURE_KEYS];
-
-/** Which features each plan tier includes (Academy = full product). */
-export const FEATURE_ACCESS: Record<PlanId, readonly FeatureKey[]> = {
-  starter: ["players", "sessions"],
-  pro: [
-    "players",
-    "sessions",
-    "analytics",
-    "automations",
-    "reports",
-    "saved_reports",
-    "group_registers",
-    "parent_emails",
-  ],
-  academy: ALL_FEATURES,
-};
+/** Which features each plan tier includes — derived from `FEATURE_DEFINITIONS`. */
+export const FEATURE_ACCESS: Record<PlanId, readonly FeatureKey[]> = buildFeatureAccess();
 
 export type CurrentSubscription = {
   userId: string | null;
@@ -53,9 +28,7 @@ function isPlanId(value: unknown): value is PlanId {
   return value === "starter" || value === "pro" || value === "academy";
 }
 
-function parseMetadataStatus(
-  raw: unknown,
-): "active" | "inactive" {
+function parseMetadataStatus(raw: unknown): "active" | "inactive" {
   if (raw === "active" || raw === "trialing") return "active";
   return "inactive";
 }
@@ -121,10 +94,10 @@ export async function getCurrentSubscription(): Promise<CurrentSubscription | nu
   };
 }
 
-export async function hasFeatureAccess(
-  featureKey: FeatureKey,
-): Promise<boolean> {
+export async function hasFeatureAccess(featureKey: FeatureKey): Promise<boolean> {
   const sub = await getCurrentSubscription();
   if (!sub) return false;
   return planHasFeature(sub.effectivePlan, featureKey);
 }
+
+export { planMeetsMinimum };

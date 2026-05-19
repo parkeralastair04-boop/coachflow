@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
 import { getReferralCode, getReferralUrl } from "@/lib/referrals";
+import { hasFeatureAccess } from "@/lib/subscription";
 import {
   getSetupRequiredMessage,
   isMissingTableError,
@@ -29,6 +31,17 @@ export async function GET() {
       return NextResponse.json(
         { error: "You must be signed in to view referrals." },
         { status: 401 },
+      );
+    }
+
+    const allowed = await hasFeatureAccess("referrals");
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: "Referrals require a higher CoachFlow plan.",
+          requiredPlan: getMinimumPlanForGateFeature("referrals"),
+        },
+        { status: 403 },
       );
     }
 

@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
+import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
 import {
   PUSH_NOTIFICATION_TEMPLATES,
   sendPushNotification,
   type PushNotificationType,
 } from "@/lib/push-notifications";
+import { hasFeatureAccess } from "@/lib/subscription";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type SendNotificationBody = {
@@ -31,6 +33,17 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "You must be signed in to send notifications." },
         { status: 401 },
+      );
+    }
+
+    const allowed = await hasFeatureAccess("push_notifications");
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: "Push notifications require CoachFlow Academy.",
+          requiredPlan: getMinimumPlanForGateFeature("push_notifications"),
+        },
+        { status: 403 },
       );
     }
 

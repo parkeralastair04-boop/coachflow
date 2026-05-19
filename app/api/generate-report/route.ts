@@ -1,5 +1,8 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
+import { hasFeatureAccess } from "@/lib/subscription";
+import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 const SYSTEM_PROMPT =
   "You are an elite football coaching assistant. Convert coaching notes into concise, professional, encouraging progress reports for parents. Highlight strengths, identify one or two development focuses, and maintain a positive and supportive tone.";
@@ -11,6 +14,30 @@ type GenerateReportBody = {
 
 export async function POST(request: Request) {
   try {
+    const supabase = await createServerSupabaseClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError) {
+      return NextResponse.json({ error: userError.message }, { status: 401 });
+    }
+    if (!user) {
+      return NextResponse.json({ error: "You must be signed in." }, { status: 401 });
+    }
+
+    const allowed = await hasFeatureAccess("reports");
+    if (!allowed) {
+      return NextResponse.json(
+        {
+          error: "AI reports require a higher CoachFlow plan.",
+          requiredPlan: getMinimumPlanForGateFeature("reports"),
+        },
+        { status: 403 },
+      );
+    }
+
     const body = (await request.json()) as GenerateReportBody;
     const playerName = body.playerName?.trim();
     const notes = body.notes?.trim();
