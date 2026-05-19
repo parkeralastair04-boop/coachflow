@@ -10,6 +10,7 @@ type PricingCardProps = {
   description: string;
   features: string[];
   highlighted?: boolean;
+  badge?: string;
   ctaHref?: string;
   ctaLabel?: string;
   cta?: ReactNode;
@@ -22,6 +23,7 @@ export function PricingCard({
   description,
   features,
   highlighted,
+  badge,
   ctaHref = "/signup",
   ctaLabel = "Start trial",
   cta,
@@ -34,9 +36,16 @@ export function PricingCard({
           "border-accent/40 ring-accent/30 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] ring-2",
       )}
     >
-      {highlighted ? (
-        <span className="bg-accent/15 text-accent mb-4 inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ring-1 ring-accent/30">
-          Most popular
+      {badge || highlighted ? (
+        <span
+          className={cn(
+            "mb-4 inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ring-1",
+            highlighted || badge === "Most Popular"
+              ? "bg-accent/15 text-accent ring-accent/30"
+              : "bg-violet-500/10 text-violet-700 ring-violet-500/25 dark:text-violet-300",
+          )}
+        >
+          {badge ?? "Most Popular"}
         </span>
       ) : null}
       <h3 className="text-lg font-semibold">{name}</h3>

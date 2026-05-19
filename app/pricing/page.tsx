@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { PricingCard } from "@/components/pricing-card";
+import { PricingComparisonTable } from "@/components/pricing-comparison-table";
 import { SubscribeButton } from "@/components/subscribe-button";
 import { BILLING_PLANS } from "@/lib/billing";
 
@@ -31,10 +32,13 @@ export default function PricingPage() {
                 description={plan.description}
                 features={plan.features}
                 highlighted={plan.highlighted}
+                badge={plan.badge}
                 cta={<SubscribeButton planId={plan.id} highlighted={plan.highlighted} />}
               />
             ))}
           </div>
+
+          <PricingComparisonTable />
         </div>
       </main>
       <Footer />

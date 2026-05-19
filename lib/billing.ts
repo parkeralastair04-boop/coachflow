@@ -8,6 +8,8 @@ export type BillingPlan = {
   description: string;
   features: string[];
   highlighted?: boolean;
+  /** Shown on pricing cards and the comparison table header. */
+  badge?: string;
   stripePriceId: string;
 };
 
@@ -34,6 +36,7 @@ export const BILLING_PLANS: BillingPlan[] = [
     description: "Growing academies with multiple squads.",
     stripePriceId: "price_1TVUxVBLSYOb3SSriUY0bkRy",
     highlighted: true,
+    badge: "Most Popular",
     features: [
       "Unlimited players",
       "Parent CRM & segments",
@@ -49,6 +52,7 @@ export const BILLING_PLANS: BillingPlan[] = [
     monthlyPounds: 149,
     description: "Multi-site programmes and franchised brands.",
     stripePriceId: "price_1TVUxmBLSYOb3SSrY00JmqgV",
+    badge: "Best for Academies",
     features: [
       "Everything in Pro",
       "Multi-location",
