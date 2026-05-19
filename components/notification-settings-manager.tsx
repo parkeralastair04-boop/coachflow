@@ -9,7 +9,13 @@ import {
   PUSH_NOTIFICATION_TYPES,
   type PushNotificationType,
 } from "@/lib/push-notifications";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+  resolveQueryError,
+} from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
 
 type NotificationPreferences = Record<PushNotificationType, boolean>;
@@ -53,6 +59,7 @@ export function NotificationSettingsManager() {
   const [registering, setRegistering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const nativePushSupported = useMemo(
     () => Capacitor.isNativePlatform() && Capacitor.isPluginAvailable("PushNotifications"),
@@ -62,6 +69,7 @@ export function NotificationSettingsManager() {
   const loadSettings = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
     try {
       const supabase = createClient();
       const {
@@ -96,11 +104,21 @@ export function NotificationSettingsManager() {
         ]);
 
       if (prefError) {
-        setError(prefError.message);
+        if (isMissingTableError(prefError)) {
+          setSetupTables(["notification_preferences"]);
+          return;
+        }
+        const resolved = resolveQueryError(prefError, "notification_preferences");
+        setError(resolved.message);
         return;
       }
       if (tokenError) {
-        setError(tokenError.message);
+        if (isMissingTableError(tokenError)) {
+          setSetupTables(["device_tokens"]);
+          return;
+        }
+        const resolved = resolveQueryError(tokenError, "device_tokens");
+        setError(resolved.message);
         return;
       }
 
@@ -111,6 +129,10 @@ export function NotificationSettingsManager() {
           .from("notification_preferences")
           .insert({ user_id: user.id, ...defaultPreferences });
         if (insertError) {
+          if (isMissingTableError(insertError)) {
+            setSetupTables(["notification_preferences"]);
+            return;
+          }
           setError(insertError.message);
           return;
         }
@@ -249,6 +271,13 @@ export function NotificationSettingsManager() {
         </p>
       </div>
 
+      {setupTables.length > 0 ? (
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
+      ) : null}
+
       {error ? (
         <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
           {error}
@@ -260,6 +289,8 @@ export function NotificationSettingsManager() {
         </div>
       ) : null}
 
+      {setupTables.length === 0 ? (
+      <>
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
@@ -358,6 +389,8 @@ export function NotificationSettingsManager() {
           </>
         )}
       </button>
+      </>
+      ) : null}
     </div>
   );
 }

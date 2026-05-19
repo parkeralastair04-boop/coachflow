@@ -18,7 +18,7 @@ type PlayerRow = {
 type SessionRow = {
   id: string;
   player_id: string;
-  session_datetime: string;
+  session_date: string;
   attendance_status: string;
 };
 
@@ -287,7 +287,7 @@ export async function POST() {
         .eq("coach_id", user.id),
       supabase
         .from("sessions")
-        .select("id, player_id, session_datetime, attendance_status")
+        .select("id, player_id, session_date, attendance_status")
         .eq("coach_id", user.id),
       supabase
         .from("progress_reports")

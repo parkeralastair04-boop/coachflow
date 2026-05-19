@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { getReferralCode, getReferralUrl } from "@/lib/referrals";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+} from "@/lib/supabase-errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type ReferralRow = {
@@ -33,10 +37,22 @@ export async function GET() {
       .from("referrals")
       .select("id, status, reward_type, reward_value, created_at")
       .eq("referrer_id", user.id)
-      .eq("referral_code", referralCode)
       .order("created_at", { ascending: false });
 
     if (error) {
+      if (isMissingTableError(error)) {
+        const setup = getSetupRequiredMessage(["referrals"]);
+        return NextResponse.json(
+          {
+            setupRequired: true,
+            setupTables: ["referrals"],
+            error: setup.description,
+            referralCode,
+            referralUrl: getReferralUrl(referralCode),
+          },
+          { status: 200 },
+        );
+      }
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 

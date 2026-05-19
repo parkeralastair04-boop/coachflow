@@ -8,7 +8,13 @@ import {
   type AcademyBranding,
   type AcademyRole,
 } from "@/lib/academy-shared";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+  resolveQueryError,
+} from "@/lib/supabase-errors";
 
 type AcademyMember = {
   id: string;
@@ -48,10 +54,12 @@ export function AcademySettingsManager() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const loadAcademy = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
 
     try {
       const supabase = createClient();
@@ -81,7 +89,12 @@ export function AcademySettingsManager() {
         .maybeSingle();
 
       if (membershipError) {
-        setError(membershipError.message);
+        if (isMissingTableError(membershipError)) {
+          setSetupTables(["academies", "academy_members"]);
+          return;
+        }
+        const resolved = resolveQueryError(membershipError, "academy_members");
+        setError(resolved.message);
         return;
       }
 
@@ -101,6 +114,10 @@ export function AcademySettingsManager() {
           .single();
 
         if (createError) {
+          if (isMissingTableError(createError)) {
+            setSetupTables(["academies", "academy_members"]);
+            return;
+          }
           setError(createError.message);
           return;
         }
@@ -115,6 +132,10 @@ export function AcademySettingsManager() {
           });
 
         if (memberError) {
+          if (isMissingTableError(memberError)) {
+            setSetupTables(["academies", "academy_members"]);
+            return;
+          }
           setError(memberError.message);
           return;
         }
@@ -128,6 +149,10 @@ export function AcademySettingsManager() {
         .order("created_at", { ascending: true });
 
       if (membersError) {
+        if (isMissingTableError(membersError)) {
+          setSetupTables(["academy_members"]);
+          return;
+        }
         setError(membersError.message);
         return;
       }
@@ -224,6 +249,26 @@ export function AcademySettingsManager() {
       <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
         <Loader2 className="size-4 animate-spin" aria-hidden />
         Loading academy settings...
+      </div>
+    );
+  }
+
+  if (setupTables.length > 0) {
+    return (
+      <div className="space-y-10">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            Academy Settings
+          </h1>
+          <p className="text-muted mt-1 max-w-2xl text-sm">
+            Configure white-label branding, domains, support details, and academy
+            membership for multi-coach teams.
+          </p>
+        </div>
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
       </div>
     );
   }

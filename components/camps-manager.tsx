@@ -9,7 +9,13 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+  resolveQueryError,
+} from "@/lib/supabase-errors";
 
 type CampRow = {
   id: string;
@@ -137,12 +143,14 @@ export function CampsManager() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const hasCamps = useMemo(() => camps.length > 0, [camps.length]);
 
   const loadCamps = useCallback(async (userId: string) => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
     try {
       const supabase = createClient();
       const { data: campRows, error: campsError } = await supabase
@@ -154,7 +162,12 @@ export function CampsManager() {
         .order("created_at", { ascending: false });
 
       if (campsError) {
-        setError(campsError.message);
+        if (isMissingTableError(campsError)) {
+          setSetupTables(["camps", "camp_enrolments"]);
+          return;
+        }
+        const resolved = resolveQueryError(campsError, "camps");
+        setError(resolved.message);
         return;
       }
 
@@ -337,6 +350,15 @@ export function CampsManager() {
         </p>
       </div>
 
+      {setupTables.length > 0 ? (
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
+      ) : null}
+
+      {setupTables.length === 0 ? (
+      <>
       <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
         <div className="flex items-start gap-3">
           <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
@@ -666,6 +688,8 @@ export function CampsManager() {
           </div>
         ) : null}
       </section>
+      </>
+      ) : null}
     </div>
   );
 }

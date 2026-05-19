@@ -19,7 +19,7 @@ type PlayerRow = {
 type SessionRow = {
   id: string;
   player_id: string;
-  session_datetime: string;
+  session_date: string;
   attendance_status: string;
 };
 
@@ -115,7 +115,7 @@ function candidatesForAutomation(args: {
         .filter((session) => session.attendance_status === "scheduled")
         .filter((session) => {
           const hoursUntil =
-            (new Date(session.session_datetime).getTime() - now.getTime()) / 3_600_000;
+            (new Date(session.session_date).getTime() - now.getTime()) / 3_600_000;
           return hoursUntil > 0 && hoursUntil <= automation.timing_offset;
         })
         .flatMap((session) => {
@@ -127,7 +127,7 @@ function candidatesForAutomation(args: {
               player,
               values: {
                 ...playerValues(player),
-                session_date: formatDate(session.session_datetime),
+                session_date: formatDate(session.session_date),
               },
             },
           ];
@@ -188,8 +188,8 @@ function candidatesForAutomation(args: {
           .filter((session) => session.player_id === player.id)
           .sort(
             (a, b) =>
-              new Date(b.session_datetime).getTime() -
-              new Date(a.session_datetime).getTime(),
+              new Date(b.session_date).getTime() -
+              new Date(a.session_date).getTime(),
           )
           .slice(0, automation.timing_offset);
         const missed =
@@ -244,7 +244,7 @@ export async function POST() {
         .eq("coach_id", user.id),
       supabase
         .from("sessions")
-        .select("id, player_id, session_datetime, attendance_status")
+        .select("id, player_id, session_date, attendance_status")
         .eq("coach_id", user.id),
       supabase
         .from("parent_subscriptions")

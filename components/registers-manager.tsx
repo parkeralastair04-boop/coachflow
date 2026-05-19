@@ -23,7 +23,7 @@ type RegisterSession = {
   id: string;
   coach_id: string;
   player_id: string;
-  session_datetime: string;
+  session_date: string;
   session_type: string | null;
   location: string | null;
   attendance_status: AttendanceStatus;
@@ -259,10 +259,10 @@ export function RegistersManager() {
         supabase
           .from("sessions")
           .select(
-            "id, coach_id, player_id, session_datetime, session_type, location, attendance_status",
+            "id, coach_id, player_id, session_date, session_type, location, attendance_status",
           )
           .eq("coach_id", userId)
-          .order("session_datetime", { ascending: false }),
+          .order("session_date", { ascending: false }),
       ]);
 
       if (playersError) {
@@ -592,7 +592,7 @@ export function RegistersManager() {
                       {playerNameById.get(session.player_id) ?? "Unknown player"}
                     </h3>
                     <p className="text-muted mt-1 text-sm">
-                      {formatSessionDate(session.session_datetime)}
+                      {formatSessionDate(session.session_date)}
                     </p>
                   </div>
                   {pendingCount > 0 ? (

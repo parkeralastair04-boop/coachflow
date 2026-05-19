@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Gift, Loader2, Mail, Share2, TrendingUp, Users } from "lucide-react";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
+import { getSetupRequiredMessage } from "@/lib/supabase-errors";
 
 type ReferralRow = {
   id: string;
@@ -12,6 +14,8 @@ type ReferralRow = {
 };
 
 type ReferralPayload = {
+  setupRequired?: boolean;
+  setupTables?: string[];
   referralCode?: string;
   referralUrl?: string;
   metrics?: {
@@ -80,13 +84,20 @@ export function ReferralsManager() {
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const loadReferrals = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
     try {
       const response = await fetch("/api/referrals");
       const payload = (await response.json()) as ReferralPayload;
+      if (payload.setupRequired && payload.setupTables?.length) {
+        setSetupTables(payload.setupTables);
+        setData(payload);
+        return;
+      }
       if (!response.ok) {
         setError(payload.error ?? "Unable to load referrals.");
         return;
@@ -160,6 +171,13 @@ export function ReferralsManager() {
         </p>
       </div>
 
+      {setupTables.length > 0 ? (
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
+      ) : null}
+
       {error ? (
         <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
           {error}
@@ -178,7 +196,7 @@ export function ReferralsManager() {
         </div>
       ) : null}
 
-      {!loading && data ? (
+      {!loading && data && setupTables.length === 0 ? (
         <>
           <section className="glass-panel rounded-2xl p-6 sm:p-8">
             <div className="flex items-start gap-3">

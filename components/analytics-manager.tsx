@@ -10,7 +10,13 @@ import {
   TrendingUp,
   Users,
 } from "lucide-react";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+  resolveQueryError,
+} from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
@@ -22,7 +28,7 @@ type PlayerRow = {
 type SessionRow = {
   id: string;
   coach_id: string;
-  session_datetime: string;
+  session_date: string;
   attendance_status: AttendanceStatus;
 };
 
@@ -200,10 +206,12 @@ export function AnalyticsManager() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const loadAnalytics = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
 
     try {
       const supabase = createClient();
@@ -232,7 +240,7 @@ export function AnalyticsManager() {
         supabase.from("players").select("id").eq("coach_id", user.id),
         supabase
           .from("sessions")
-          .select("id, coach_id, session_datetime, attendance_status")
+          .select("id, coach_id, session_date, attendance_status")
           .eq("coach_id", user.id),
         supabase
           .from("progress_reports")
@@ -252,16 +260,42 @@ export function AnalyticsManager() {
           .eq("coach_id", user.id),
       ]);
 
-      const firstError =
-        playersResult.error ??
-        sessionsResult.error ??
-        reportsResult.error ??
-        subscriptionsResult.error ??
-        campsResult.error ??
-        enrolmentsResult.error;
+      const requiredResults = [
+        { table: "players", error: playersResult.error },
+        { table: "sessions", error: sessionsResult.error },
+        { table: "progress_reports", error: reportsResult.error },
+        { table: "parent_subscriptions", error: subscriptionsResult.error },
+      ];
 
+      const missingRequired = requiredResults
+        .filter((result) => isMissingTableError(result.error))
+        .map((result) => result.table);
+
+      if (missingRequired.length > 0) {
+        setSetupTables(missingRequired);
+        return;
+      }
+
+      const optionalMissing = ["camps", "camp_enrolments"].filter((table, index) => {
+        const error = index === 0 ? campsResult.error : enrolmentsResult.error;
+        return isMissingTableError(error);
+      });
+      if (optionalMissing.length > 0) {
+        setSetupTables(optionalMissing);
+      }
+
+      const firstError = [
+        ...requiredResults,
+        { table: "camps", error: campsResult.error },
+        { table: "camp_enrolments", error: enrolmentsResult.error },
+      ].find((result) => result.error)?.error;
       if (firstError) {
-        setError(firstError.message);
+        const resolved = resolveQueryError(firstError, "analytics");
+        if (resolved.setupRequired) {
+          setSetupTables([resolved.table]);
+          return;
+        }
+        setError(resolved.message);
         return;
       }
 
@@ -270,8 +304,12 @@ export function AnalyticsManager() {
         sessions: (sessionsResult.data ?? []) as SessionRow[],
         reports: (reportsResult.data ?? []) as ReportRow[],
         subscriptions: (subscriptionsResult.data ?? []) as ParentSubscriptionRow[],
-        camps: (campsResult.data ?? []) as CampRow[],
-        enrolments: (enrolmentsResult.data ?? []) as CampEnrolmentRow[],
+        camps: isMissingTableError(campsResult.error)
+          ? []
+          : ((campsResult.data ?? []) as CampRow[]),
+        enrolments: isMissingTableError(enrolmentsResult.error)
+          ? []
+          : ((enrolmentsResult.data ?? []) as CampEnrolmentRow[]),
       });
     } catch (caughtError: unknown) {
       setError(getErrorMessage(caughtError));
@@ -350,7 +388,7 @@ export function AnalyticsManager() {
     const attendedSeries = emptySeries();
     const attendanceTotalSeries = emptySeries();
     for (const session of data.sessions) {
-      const key = monthKey(new Date(session.session_datetime));
+      const key = monthKey(new Date(session.session_date));
       if (!(key in sessionVolumeSeries)) continue;
       sessionVolumeSeries[key] += 1;
       attendanceTotalSeries[key] += 1;
@@ -411,6 +449,13 @@ export function AnalyticsManager() {
           business.
         </p>
       </div>
+
+      {setupTables.length > 0 ? (
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
+      ) : null}
 
       {error ? (
         <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">

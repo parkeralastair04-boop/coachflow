@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getReferralCode, getReferralUrl } from "@/lib/referrals";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
+import { getSetupRequiredMessage, isMissingTableError } from "@/lib/supabase-errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 type InviteBody = {
@@ -43,6 +44,13 @@ export async function POST(request: Request) {
     });
 
     if (insertError) {
+      if (isMissingTableError(insertError)) {
+        const setup = getSetupRequiredMessage(["referrals"]);
+        return NextResponse.json(
+          { setupRequired: true, setupTables: ["referrals"], error: setup.description },
+          { status: 503 },
+        );
+      }
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 

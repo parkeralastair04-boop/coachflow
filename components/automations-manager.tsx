@@ -15,7 +15,13 @@ import {
   type AutomationRow,
   type AutomationType,
 } from "@/lib/automations";
+import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
+import {
+  getSetupRequiredMessage,
+  isMissingTableError,
+  resolveQueryError,
+} from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
 
 function getErrorMessage(error: unknown): string {
@@ -54,6 +60,7 @@ export function AutomationsManager() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const automationsByType = useMemo(
     () => new Map(automations.map((automation) => [automation.type, automation])),
@@ -63,6 +70,7 @@ export function AutomationsManager() {
   const loadAutomations = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSetupTables([]);
 
     try {
       const supabase = createClient();
@@ -90,7 +98,12 @@ export function AutomationsManager() {
         .order("created_at", { ascending: true });
 
       if (automationsError) {
-        setError(automationsError.message);
+        if (isMissingTableError(automationsError)) {
+          setSetupTables(["automations"]);
+          return;
+        }
+        const resolved = resolveQueryError(automationsError, "automations");
+        setError(resolved.setupRequired ? resolved.message : automationsError.message);
         return;
       }
 
@@ -109,6 +122,10 @@ export function AutomationsManager() {
           );
 
         if (insertError) {
+          if (isMissingTableError(insertError)) {
+            setSetupTables(["automations"]);
+            return;
+          }
           setError(insertError.message);
           return;
         }
@@ -248,6 +265,13 @@ export function AutomationsManager() {
         </button>
       </div>
 
+      {setupTables.length > 0 ? (
+        <SetupRequiredPanel
+          {...getSetupRequiredMessage(setupTables)}
+          tables={setupTables}
+        />
+      ) : null}
+
       {error ? (
         <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
           {error}
@@ -259,6 +283,8 @@ export function AutomationsManager() {
         </div>
       ) : null}
 
+      {setupTables.length === 0 ? (
+      <>
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <div className="flex items-start gap-3">
           <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
@@ -410,6 +436,8 @@ export function AutomationsManager() {
           </p>
         </div>
       </section>
+      </>
+      ) : null}
     </div>
   );
 }

@@ -15,7 +15,7 @@ type SessionRow = {
   id: string;
   coach_id: string;
   player_id: string;
-  session_datetime: string;
+  session_date: string;
   session_type: string | null;
   location: string | null;
   notes: string | null;
@@ -103,10 +103,10 @@ export function SessionsManager() {
           supabase
             .from("sessions")
             .select(
-              "id, coach_id, player_id, session_datetime, session_type, location, notes, attendance_status, created_at",
+              "id, coach_id, player_id, session_date, session_type, location, notes, attendance_status, created_at",
             )
             .eq("coach_id", userId)
-            .order("session_datetime", { ascending: false }),
+            .order("session_date", { ascending: false }),
         ]);
 
       if (playersError) {
@@ -199,7 +199,7 @@ export function SessionsManager() {
       const payload = {
         coach_id: coachId,
         player_id: form.playerId,
-        session_datetime: new Date(form.sessionDateTime).toISOString(),
+        session_date: new Date(form.sessionDateTime).toISOString(),
         session_type: form.sessionType.trim() || null,
         location: form.location.trim() || null,
         notes: form.notes.trim() || null,
@@ -210,7 +210,7 @@ export function SessionsManager() {
         .from("sessions")
         .insert(payload)
         .select(
-          "id, coach_id, player_id, session_datetime, session_type, location, notes, attendance_status, created_at",
+          "id, coach_id, player_id, session_date, session_type, location, notes, attendance_status, created_at",
         )
         .single();
 
@@ -472,7 +472,7 @@ export function SessionsManager() {
                       {playerNameById.get(session.player_id) ?? "Unknown player"}
                     </h3>
                     <p className="text-muted mt-1 text-sm">
-                      {formatSessionDate(session.session_datetime)}
+                      {formatSessionDate(session.session_date)}
                     </p>
                   </div>
                   <button
