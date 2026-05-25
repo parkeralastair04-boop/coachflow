@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarRange,
   Clock3,
+  Copy,
   Eye,
   EyeOff,
+  ExternalLink,
   Loader2,
   PoundSterling,
   Trash2,
@@ -70,8 +72,16 @@ function formatTime(value: string): string {
 }
 
 export function AvailabilityManager() {
+  const initialPortalOrigin =
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    (typeof window !== "undefined" ? window.location.origin : "");
   const [coachId, setCoachId] = useState<string | null>(null);
   const [academyId, setAcademyId] = useState<string | null>(null);
+  const [coachSlug, setCoachSlug] = useState<string | null>(null);
+  const [academySlug, setAcademySlug] = useState<string | null>(null);
+  const [portalOrigin] = useState(initialPortalOrigin.replace(/\/$/, ""));
+  const [copiedUrl, setCopiedUrl] = useState<"coach" | "academy" | null>(null);
   const [templates, setTemplates] = useState<CoachAvailabilityRow[]>([]);
   const [recurringSeries, setRecurringSeries] = useState<RecurringSessionSeriesRow[]>([]);
   const [form, setForm] = useState<AvailabilityFormState>(defaultForm);
@@ -86,6 +96,19 @@ export function AvailabilityManager() {
     () => templates.filter((template) => template.is_public).length,
     [templates],
   );
+
+  const coachBookingUrl = useMemo(() => {
+    if (!coachSlug) return null;
+    return `${portalOrigin || ""}/book/${coachSlug}`.replace(/([^:]\/)\/+/g, "$1");
+  }, [coachSlug, portalOrigin]);
+
+  const academyBookingUrl = useMemo(() => {
+    if (!academySlug) return null;
+    return `${portalOrigin || ""}/academy/${academySlug}/book`.replace(
+      /([^:]\/)\/+/g,
+      "$1",
+    );
+  }, [academySlug, portalOrigin]);
 
   const loadTemplates = useCallback(async (userId: string) => {
     setLoading(true);
@@ -173,7 +196,28 @@ export function AvailabilityManager() {
           .order("created_at", { ascending: true })
           .limit(1)
           .maybeSingle();
-        setAcademyId((membership?.academy_id as string | undefined) ?? null);
+        const resolvedAcademyId = (membership?.academy_id as string | undefined) ?? null;
+        setAcademyId(resolvedAcademyId);
+
+        const [{ data: profileData }, { data: academyData }] = await Promise.all([
+          supabase
+            .from("coach_public_profiles")
+            .select("slug")
+            .eq("coach_id", user.id)
+            .maybeSingle(),
+          resolvedAcademyId
+            ? supabase
+                .from("academies")
+                .select("slug")
+                .eq("id", resolvedAcademyId)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
+
+        if (!cancelled) {
+          setCoachSlug((profileData?.slug as string | undefined) ?? null);
+          setAcademySlug((academyData?.slug as string | undefined) ?? null);
+        }
         await loadTemplates(user.id);
       } catch (caughtError: unknown) {
         if (!cancelled) {
@@ -284,6 +328,16 @@ export function AvailabilityManager() {
     }
   }
 
+  async function copyPortalUrl(kind: "coach" | "academy", url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedUrl(kind);
+      window.setTimeout(() => setCopiedUrl((current) => (current === kind ? null : current)), 2000);
+    } catch {
+      setSubmitError("Could not copy the booking URL.");
+    }
+  }
+
   return (
     <div className="space-y-10">
       <div>
@@ -303,6 +357,100 @@ export function AvailabilityManager() {
 
       {setupTables.length === 0 ? (
         <>
+          <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+            <div className="flex items-start gap-3">
+              <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+                <CalendarRange className="text-accent size-5" aria-hidden />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  How public booking works
+                </h2>
+                <p className="text-muted mt-1 max-w-2xl text-sm">
+                  Create public or private sessions, share your booking portal, and let
+                  CoachFlow handle reservations, payments, and availability in one place.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-8 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                  <p className="text-sm font-medium">Public or private sessions</p>
+                  <p className="text-muted mt-1 text-sm leading-relaxed">
+                    Choose exactly which sessions appear online and keep internal
+                    scheduling private.
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                  <p className="text-sm font-medium">Parents book online</p>
+                  <p className="text-muted mt-1 text-sm leading-relaxed">
+                    Families reserve sessions through your unique booking portal URL.
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                  <p className="text-sm font-medium">Recurring subscriptions</p>
+                  <p className="text-muted mt-1 text-sm leading-relaxed">
+                    Offer weekly coaching subscriptions alongside one-off bookings.
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                  <p className="text-sm font-medium">Automatic spaces and payments</p>
+                  <p className="text-muted mt-1 text-sm leading-relaxed">
+                    Capacity updates automatically and Stripe handles secure checkout.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-black/[0.02] p-5 dark:bg-white/[0.03]">
+                <p className="text-sm font-semibold tracking-tight">
+                  Coach booking URL
+                </p>
+                <p className="text-muted mt-1 text-sm">
+                  Share this link with parents to start taking bookings.
+                </p>
+
+                {coachBookingUrl ? (
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-xl border border-black/5 bg-background px-3 py-3 text-sm dark:border-white/10">
+                      <p className="break-all font-medium">{coachBookingUrl}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void copyPortalUrl("coach", coachBookingUrl)}
+                        className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                      >
+                        <Copy className="mr-2 size-4" aria-hidden />
+                        {copiedUrl === "coach" ? "Copied" : "Copy link"}
+                      </button>
+                      <a
+                        href={coachBookingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition-opacity"
+                      >
+                        <ExternalLink className="mr-2 size-4" aria-hidden />
+                        Open portal
+                      </a>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-muted">
+                    Your coach booking link will appear here once your public portal is ready.
+                  </p>
+                )}
+
+                {academyBookingUrl ? (
+                  <div className="mt-5 border-t border-black/5 pt-5 dark:border-white/10">
+                    <p className="text-sm font-medium">Academy portal</p>
+                    <p className="text-muted mt-1 break-all text-sm">{academyBookingUrl}</p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
           <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
             <div className="flex items-start gap-3">
               <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
@@ -474,10 +622,13 @@ export function AvailabilityManager() {
               </div>
 
               <div className="sm:col-span-2 rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
-                <p className="font-medium">Camp booking stays on the current Camps flow for now.</p>
+                <p className="font-medium">
+                  Save your preferred format, pricing, and visibility once, then reuse
+                  it whenever you schedule new sessions.
+                </p>
                 <p className="text-muted mt-1">
-                  You can reserve Camp as a template type, but phase 1 uses this new
-                  booking workflow primarily for 1-to-1 and Group Session bookings.
+                  A polished availability setup keeps your calendar consistent across
+                  private coaching, public bookings, and recurring offers.
                 </p>
               </div>
 

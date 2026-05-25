@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
-import { BrandLogo } from "@/components/brand-logo";
+import { Download, Plus, Share2, Sparkles, X } from "lucide-react";
+import { BrandAppIcon } from "@/components/brand-mark";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -19,11 +19,19 @@ function isStandaloneDisplayMode() {
   );
 }
 
+function isIosDevice() {
+  const userAgent = window.navigator.userAgent;
+  const touchMac =
+    window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1;
+  return /iPad|iPhone|iPod/.test(userAgent) || touchMac;
+}
+
 export function PwaInstallBanner() {
   const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(
     null,
   );
   const [visible, setVisible] = useState(false);
+  const [mode, setMode] = useState<"prompt" | "ios">("prompt");
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -44,11 +52,26 @@ export function PwaInstallBanner() {
   }, []);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (window.localStorage.getItem(DISMISSED_KEY) === "true") return;
+      if (isStandaloneDisplayMode()) return;
+      if (!isIosDevice()) return;
+      setMode("ios");
+      setVisible(true);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  useEffect(() => {
     function handleBeforeInstallPrompt(event: Event) {
       event.preventDefault();
       if (window.localStorage.getItem(DISMISSED_KEY) === "true") return;
       if (isStandaloneDisplayMode()) return;
 
+      setMode("prompt");
       setPromptEvent(event as BeforeInstallPromptEvent);
       setVisible(true);
     }
@@ -84,33 +107,59 @@ export function PwaInstallBanner() {
     setVisible(false);
   }
 
-  if (!visible || !promptEvent) return null;
+  if (!visible) return null;
+  if (mode === "prompt" && !promptEvent) return null;
 
   return (
-    <div className="fixed right-4 bottom-4 z-[60] max-w-sm">
-      <div className="glass-panel rounded-2xl p-4 shadow-2xl">
-        <div className="flex items-start gap-3">
-          <BrandLogo size="pwaBanner" className="shrink-0" />
+    <div className="fixed inset-x-4 bottom-4 z-[60] sm:inset-x-auto sm:right-4 sm:max-w-md [padding-bottom:env(safe-area-inset-bottom)]">
+      <div className="glass-panel rounded-[1.75rem] border border-white/10 p-4 shadow-[0_24px_80px_rgba(0,0,0,0.28)] sm:p-5">
+        <div className="flex items-start gap-4">
+          <div className="size-14 shrink-0 overflow-hidden rounded-[28%] ring-1 ring-white/10">
+            <BrandAppIcon />
+          </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold tracking-tight">Install on your device</p>
-            <p className="text-muted mt-1 text-xs leading-relaxed">
-              Add CoachFlow to your device for quick access and offline-ready
-              dashboard pages.
+            <div className="flex items-center gap-2">
+              <span className="bg-accent/12 text-accent inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 ring-accent/20">
+                <Sparkles className="size-3" aria-hidden />
+                Mobile app
+              </span>
+            </div>
+            <p className="mt-3 text-base font-semibold tracking-tight">
+              Add CoachFlow to Home Screen
             </p>
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => void handleInstall()}
-                className="bg-foreground text-background hover:opacity-90 inline-flex h-9 items-center justify-center rounded-full px-4 text-xs font-medium transition-opacity"
-              >
-                Install
-              </button>
+            <p className="text-muted mt-1 text-sm leading-relaxed">
+              Launch faster, keep CoachFlow close at hand, and enjoy a cleaner app-like
+              experience on mobile.
+            </p>
+
+            {mode === "ios" ? (
+              <div className="mt-4 rounded-2xl bg-black/[0.02] p-3 text-sm dark:bg-white/[0.04]">
+                <p className="font-medium">On iPhone or iPad</p>
+                <p className="text-muted mt-1 leading-relaxed">
+                  Tap <Share2 className="mx-1 inline size-3.5 align-[-1px]" aria-hidden /> Share,
+                  then choose <Plus className="mx-1 inline size-3.5 align-[-1px]" aria-hidden />
+                  Add to Home Screen.
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {mode === "prompt" ? (
+                <button
+                  type="button"
+                  onClick={() => void handleInstall()}
+                  className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity"
+                >
+                  <Download className="mr-2 size-4" aria-hidden />
+                  Install CoachFlow
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={handleDismiss}
-                className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center justify-center rounded-full border px-4 text-xs font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
               >
-                Not now
+                Maybe later
               </button>
             </div>
           </div>

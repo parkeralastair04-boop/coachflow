@@ -3,6 +3,7 @@ import { getPlanById } from "@/lib/billing";
 
 export type FeatureInfoKey =
   | "players"
+  | "teams"
   | "sessions"
   | "registers"
   | "camps"
@@ -34,6 +35,13 @@ export const FEATURE_INFO: Record<FeatureInfoKey, FeatureInfoEntry> = {
     usage: "Add players at the start of term, keep parent emails current, and review profiles before sending reports.",
     includedIn: ["starter", "pro", "academy"],
   },
+  teams: {
+    title: "Team Management",
+    what: "Create squads, assign players, set captains, and organise rosters by position or matchday order.",
+    why: "Shared team structure keeps sessions, registers, and reporting aligned across the season.",
+    usage: "Create each squad once, attach players with their roles, then use roster views before planning sessions or reports.",
+    includedIn: ["starter", "pro", "academy"],
+  },
   sessions: {
     title: "Sessions",
     what: "Schedule 1:1s or group coaching blocks with dates, locations, optional group names, and multiple assigned players.",
@@ -42,10 +50,10 @@ export const FEATURE_INFO: Record<FeatureInfoKey, FeatureInfoEntry> = {
     includedIn: ["starter", "pro", "academy"],
   },
   registers: {
-    title: "Group Registers",
-    what: "Mark attendance on mobile. Academy plans also sync offline marks when connectivity returns.",
-    why: "Fast roll calls reduce admin after training and feed accurate attendance into player history.",
-    usage: "Open the register before each session and tap present or absent. Academy coaches can work offline on the pitch.",
+    title: "Player Registers",
+    what: "Mark attendance player by player on mobile, use bulk actions for squads, and keep offline sync for pitch-side updates.",
+    why: "Fast, accurate player-level attendance reduces admin after training and feeds reliable history into reports and analytics.",
+    usage: "Open the register before each session, tap each player's status, then use bulk actions where most of the squad shares the same outcome.",
     includedIn: ["pro", "academy"],
   },
   camps: {

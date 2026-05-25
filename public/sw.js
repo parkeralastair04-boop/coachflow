@@ -1,8 +1,16 @@
-const CACHE_VERSION = "coachflow-pwa-v1";
+const CACHE_VERSION = "coachflow-pwa-v2";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 
-const STATIC_ASSETS = ["/", "/logo.png", "/favicon.ico", "/manifest.webmanifest"];
+const STATIC_ASSETS = [
+  "/",
+  "/logo.png",
+  "/app-icon/32",
+  "/app-icon/180",
+  "/app-icon/192",
+  "/app-icon/512",
+  "/manifest.webmanifest",
+];
 const OFFLINE_READY_ROUTES = [
   "/dashboard",
   "/dashboard/players",
@@ -85,7 +93,7 @@ self.addEventListener("fetch", (event) => {
 
   if (
     url.pathname === "/logo.png" ||
-    url.pathname === "/favicon.ico" ||
+    url.pathname.startsWith("/app-icon/") ||
     url.pathname === "/manifest.webmanifest" ||
     url.pathname.startsWith("/_next/static/")
   ) {

@@ -101,10 +101,10 @@ export function Sidebar({
 
   return (
     <aside className="glass-panel flex h-full w-full flex-col border-r border-border lg:fixed lg:inset-y-0 lg:w-60">
-      <div className="flex min-h-[4.5rem] items-center gap-2 border-b border-black/[0.06] px-4 py-3 dark:border-white/[0.08] lg:min-h-[5rem]">
+      <div className="flex min-h-[5rem] items-center gap-2 border-b border-black/[0.06] px-4 py-3 dark:border-white/[0.08] lg:min-h-[5.5rem] lg:px-5">
         <Link
           href="/dashboard"
-          className="inline-flex min-w-0 flex-1 items-center"
+          className="inline-flex min-w-0 flex-1 items-center leading-none"
           aria-label="CoachFlow dashboard"
           onClick={onNavigate}
         >

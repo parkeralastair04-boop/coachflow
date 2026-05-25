@@ -44,7 +44,7 @@ export const FAQ_ITEMS = [
   {
     question: "How do I install the mobile app?",
     answer:
-      "Install CoachFlow from the App Store or Google Play when available, or add the PWA to your home screen from coachflow.website in Safari or Chrome via Add to Home Screen.",
+      "Open CoachFlow on your phone, then use the install prompt or Add to Home Screen in Safari or Chrome for a native-style mobile experience.",
   },
   {
     question: "How do I upgrade my plan?",

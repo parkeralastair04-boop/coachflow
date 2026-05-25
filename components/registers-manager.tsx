@@ -11,10 +11,16 @@ import {
   WifiOff,
 } from "lucide-react";
 import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
+import {
+  PLAYER_ATTENDANCE_STATUS_OPTIONS,
+  getAttendanceLabel,
+  getAttendanceSummary,
+  type PlayerAttendanceRow,
+  type PlayerAttendanceStatus,
+} from "@/lib/attendance";
+import { getTeamDisplayName, unwrapSingleRelation, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-
-type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
 type SessionPlayerLink = {
   player_id: string;
@@ -30,6 +36,22 @@ type SessionPlayerLink = {
 type PlayerRow = {
   id: string;
   player_name: string;
+};
+
+type TeamPlayerLink = {
+  player_id: string;
+  squad_order: number;
+  player: {
+    id: string;
+    player_name: string;
+  }[] | {
+    id: string;
+    player_name: string;
+  } | null;
+};
+
+type TeamOption = TeamSummary & {
+  team_players: TeamPlayerLink[] | null;
 };
 
 type SessionBookingLink = {
@@ -49,40 +71,54 @@ type RegisterSession = {
   id: string;
   coach_id: string;
   player_id: string | null;
+  team_id: string | null;
   group_name: string | null;
   session_date: string;
   session_type: string | null;
   location: string | null;
-  attendance_status: AttendanceStatus;
   session_players: SessionPlayerLink[] | null;
+  team: TeamSummary[] | TeamSummary | null;
+};
+
+type AttendanceRow = PlayerAttendanceRow & {
+  id: string;
+  coach_id: string;
 };
 
 type OfflineAttendanceChange = {
   id: string;
   coachId: string;
   sessionId: string;
-  attendanceStatus: AttendanceStatus;
-  updatedAt: string;
+  playerId: string;
+  status: PlayerAttendanceStatus;
+  notes: string | null;
+  recordedAt: string;
 };
 
 type SyncState = "online" | "offline" | "syncing" | "synced";
 
-const attendanceOptions: AttendanceStatus[] = [
-  "scheduled",
-  "attended",
-  "missed",
-  "cancelled",
-];
+type RosterPlayer = {
+  player_id: string;
+  player_name: string;
+  attendance: AttendanceRow | null;
+  noteDraft: string;
+};
 
 const SESSION_SELECT = `
   id,
   coach_id,
   player_id,
+  team_id,
   group_name,
   session_date,
   session_type,
   location,
-  attendance_status,
+  team:teams (
+    id,
+    team_name,
+    age_group,
+    team_color
+  ),
   session_players (
     player_id,
     player:players (
@@ -92,10 +128,13 @@ const SESSION_SELECT = `
   )
 `;
 
-const DB_NAME = "coachflow-registers";
+const ATTENDANCE_SELECT =
+  "id, coach_id, session_id, player_id, status, notes, recorded_at";
+
+const DB_NAME = "coachflow-registers-v2";
 const DB_VERSION = 1;
 const STORE_NAME = "attendance_changes";
-const LOCAL_STORAGE_KEY = "coachflow:offline-attendance-changes";
+const LOCAL_STORAGE_KEY = "coachflow:offline-player-attendance";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -121,61 +160,28 @@ function formatSessionDate(value: string): string {
   }).format(parsed);
 }
 
-function getAssignedPlayerNames(
-  session: RegisterSession,
-  playerNameById: Map<string, string>,
-  sessionBookings: SessionBookingLink[],
-): string[] {
-  const namesByPlayerId = new Map<string, string>();
-
-  for (const booking of sessionBookings) {
-    if (booking.session_id !== session.id || booking.booking_status !== "confirmed") continue;
-    const player = Array.isArray(booking.player) ? booking.player[0] : booking.player;
-    namesByPlayerId.set(
-      booking.player_id,
-      player?.player_name ?? playerNameById.get(booking.player_id) ?? "Unknown player",
-    );
-  }
-
-  const linkedNames = (session.session_players ?? [])
-    .map((link) => {
-      const player = Array.isArray(link.player) ? link.player[0] : link.player;
-      const name =
-        player?.player_name ?? playerNameById.get(link.player_id) ?? null;
-      if (name) {
-        namesByPlayerId.set(link.player_id, name);
-      }
-      return name;
-    })
-    .filter((name): name is string => Boolean(name));
-
-  if (linkedNames.length > 0 || namesByPlayerId.size > 0) {
-    return [...namesByPlayerId.values()];
-  }
-
-  if (session.player_id) {
-    return [playerNameById.get(session.player_id) ?? "Unknown player"];
-  }
-
-  return [];
+function formatRecordedAt(value: string | null): string {
+  if (!value) return "Not marked yet";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Saved";
+  return new Intl.DateTimeFormat("en-GB", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
 }
 
-function getRegisterTitle(
-  session: RegisterSession,
-  playerNameById: Map<string, string>,
-  sessionBookings: SessionBookingLink[],
-): string {
+function getRegisterTitle(session: RegisterSession): string {
   if (session.group_name?.trim()) return session.group_name;
+  const team = unwrapSingleRelation(session.team);
+  if (team?.team_name?.trim()) return team.team_name;
   if (session.session_type?.trim()) return session.session_type;
-
-  const names = getAssignedPlayerNames(session, playerNameById, sessionBookings);
-  if (names.length === 0) return "Untitled session";
-  if (names.length <= 2) return names.join(" & ");
-  return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
+  return "Untitled session";
 }
 
-function queueKey(coachId: string, sessionId: string): string {
-  return `${coachId}:${sessionId}`;
+function queueKey(coachId: string, sessionId: string, playerId: string): string {
+  return `${coachId}:${sessionId}:${playerId}`;
 }
 
 function openOfflineDb(): Promise<IDBDatabase | null> {
@@ -288,10 +294,10 @@ function StatusIndicator({
   pendingCount: number;
 }) {
   const labels: Record<SyncState, string> = {
-    online: "Online ✅",
-    offline: "Offline ⚠️",
-    syncing: "Syncing 🔄",
-    synced: "Synced ✅",
+    online: "Online",
+    offline: "Offline",
+    syncing: "Syncing",
+    synced: "Synced",
   };
 
   return (
@@ -313,11 +319,153 @@ function StatusIndicator({
   );
 }
 
+function mergeAttendanceRows(
+  rows: AttendanceRow[],
+  queued: OfflineAttendanceChange[],
+): AttendanceRow[] {
+  const byKey = new Map<string, AttendanceRow>();
+
+  for (const row of rows) {
+    byKey.set(queueKey(row.coach_id, row.session_id, row.player_id), row);
+  }
+
+  for (const change of queued) {
+    byKey.set(change.id, {
+      id: change.id,
+      coach_id: change.coachId,
+      session_id: change.sessionId,
+      player_id: change.playerId,
+      status: change.status,
+      notes: change.notes,
+      recorded_at: change.recordedAt,
+    });
+  }
+
+  return [...byKey.values()];
+}
+
+function buildSessionRoster(args: {
+  session: RegisterSession;
+  playerNameById: Map<string, string>;
+  sessionBookings: SessionBookingLink[];
+  teamPlayersByTeamId: Map<
+    string,
+    { player_id: string; player_name: string; squad_order: number }[]
+  >;
+  teamOrderByPlayerId: Map<string, Map<string, number>>;
+  attendanceByKey: Map<string, AttendanceRow>;
+  noteDrafts: Record<string, string>;
+}): RosterPlayer[] {
+  const rosterById = new Map<
+    string,
+    { player_id: string; player_name: string; squad_order: number | null }
+  >();
+
+  for (const link of args.session.session_players ?? []) {
+    const player = Array.isArray(link.player) ? link.player[0] : link.player;
+    rosterById.set(link.player_id, {
+      player_id: link.player_id,
+      player_name:
+        player?.player_name ??
+        args.playerNameById.get(link.player_id) ??
+        "Unknown player",
+      squad_order:
+        args.teamOrderByPlayerId
+          .get(args.session.team_id ?? "")?.get(link.player_id) ?? null,
+    });
+  }
+
+  for (const booking of args.sessionBookings) {
+    if (booking.session_id !== args.session.id || booking.booking_status !== "confirmed") {
+      continue;
+    }
+    const player = Array.isArray(booking.player) ? booking.player[0] : booking.player;
+    rosterById.set(booking.player_id, {
+      player_id: booking.player_id,
+      player_name:
+        player?.player_name ??
+        args.playerNameById.get(booking.player_id) ??
+        "Unknown player",
+      squad_order:
+        args.teamOrderByPlayerId
+          .get(args.session.team_id ?? "")?.get(booking.player_id) ?? null,
+    });
+  }
+
+  if (rosterById.size === 0 && args.session.team_id) {
+    for (const player of args.teamPlayersByTeamId.get(args.session.team_id) ?? []) {
+      rosterById.set(player.player_id, player);
+    }
+  }
+
+  if (rosterById.size === 0 && args.session.player_id) {
+    rosterById.set(args.session.player_id, {
+      player_id: args.session.player_id,
+      player_name:
+        args.playerNameById.get(args.session.player_id) ?? "Unknown player",
+      squad_order: null,
+    });
+  }
+
+  return [...rosterById.values()]
+    .sort((a, b) => {
+      if (a.squad_order !== null && b.squad_order !== null) {
+        return a.squad_order - b.squad_order || a.player_name.localeCompare(b.player_name);
+      }
+      if (a.squad_order !== null) return -1;
+      if (b.squad_order !== null) return 1;
+      return a.player_name.localeCompare(b.player_name);
+    })
+    .map((player) => {
+      const key = queueKey(
+        args.session.coach_id,
+        args.session.id,
+        player.player_id,
+      );
+      return {
+        player_id: player.player_id,
+        player_name: player.player_name,
+        attendance: args.attendanceByKey.get(key) ?? null,
+        noteDraft: args.noteDrafts[key] ?? args.attendanceByKey.get(key)?.notes ?? "",
+      };
+    });
+}
+
+function AttendanceStatusButton({
+  status,
+  active,
+  disabled,
+  onClick,
+}: {
+  status: PlayerAttendanceStatus;
+  active: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "border-border hover:bg-black/[0.03] rounded-xl border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]",
+        active && "bg-accent/10 text-accent border-accent/30 ring-accent/20 ring-1",
+      )}
+    >
+      {getAttendanceLabel(status)}
+    </button>
+  );
+}
+
 export function RegistersManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingLink[]>([]);
   const [sessions, setSessions] = useState<RegisterSession[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
+  const [teamFilter, setTeamFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -328,8 +476,9 @@ export function RegistersManager() {
     typeof navigator === "undefined" || navigator.onLine ? "online" : "offline",
   );
   const [pendingCount, setPendingCount] = useState(0);
-  const [queuedSessionIds, setQueuedSessionIds] = useState<string[]>([]);
-  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [queuedAttendanceKeys, setQueuedAttendanceKeys] = useState<string[]>([]);
+  const [busyKeys, setBusyKeys] = useState<string[]>([]);
+  const [bulkUpdatingSessionId, setBulkUpdatingSessionId] = useState<string | null>(null);
   const syncingRef = useRef(false);
 
   const playerNameById = useMemo(
@@ -337,87 +486,181 @@ export function RegistersManager() {
     [players],
   );
 
+  const teamPlayersByTeamId = useMemo(() => {
+    return new Map(
+      teams.map((team) => [
+        team.id,
+        (team.team_players ?? [])
+          .map((membership) => {
+            const player = Array.isArray(membership.player)
+              ? membership.player[0]
+              : membership.player;
+            return {
+              player_id: membership.player_id,
+              player_name:
+                player?.player_name ??
+                playerNameById.get(membership.player_id) ??
+                "Unknown player",
+              squad_order: membership.squad_order,
+            };
+          })
+          .sort((a, b) => a.squad_order - b.squad_order || a.player_name.localeCompare(b.player_name)),
+      ]),
+    );
+  }, [playerNameById, teams]);
+
+  const teamOrderByPlayerId = useMemo(() => {
+    return new Map(
+      teams.map((team) => [
+        team.id,
+        new Map(
+          (team.team_players ?? []).map((membership) => [
+            membership.player_id,
+            membership.squad_order,
+          ]),
+        ),
+      ]),
+    );
+  }, [teams]);
+
+  const attendanceByKey = useMemo(
+    () =>
+      new Map(
+        attendanceRows.map((row) => [
+          queueKey(row.coach_id, row.session_id, row.player_id),
+          row,
+        ]),
+      ),
+    [attendanceRows],
+  );
+
+  const visibleSessions = useMemo(() => {
+    if (teamFilter === "all") return sessions;
+    if (teamFilter === "none") return sessions.filter((session) => !session.team_id);
+    return sessions.filter((session) => session.team_id === teamFilter);
+  }, [sessions, teamFilter]);
+
   const refreshPendingCount = useCallback(async () => {
     const queued = await getQueuedChanges();
     setPendingCount(queued.length);
-    setQueuedSessionIds(queued.map((change) => change.sessionId));
+    setQueuedAttendanceKeys(queued.map((change) => change.id));
     return queued;
   }, []);
 
-  const loadRegisters = useCallback(async (userId: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const supabase = createClient();
-      const [
-        { data: sessionsData, error: sessionsError },
-        { data: playersData, error: playersError },
-        { data: bookingsData, error: bookingsError },
-      ] = await Promise.all([
-        supabase
-          .from("sessions")
-          .select(SESSION_SELECT)
-          .eq("coach_id", userId)
-          .order("session_date", { ascending: false }),
-        supabase
-          .from("players")
-          .select("id, player_name")
-          .eq("coach_id", userId),
-        supabase
-          .from("session_bookings")
-          .select(
-            `
-              session_id,
-              player_id,
-              booking_status,
-              player:players (
+  const loadRegisters = useCallback(
+    async (userId: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const supabase = createClient();
+        const [
+          { data: sessionsData, error: sessionsError },
+          { data: playersData, error: playersError },
+          { data: teamsData, error: teamsError },
+          { data: bookingsData, error: bookingsError },
+          { data: attendanceData, error: attendanceError },
+        ] = await Promise.all([
+          supabase
+            .from("sessions")
+            .select(SESSION_SELECT)
+            .eq("coach_id", userId)
+            .order("session_date", { ascending: false }),
+          supabase
+            .from("players")
+            .select("id, player_name")
+            .eq("coach_id", userId),
+          supabase
+            .from("teams")
+            .select(
+              `
                 id,
-                player_name
-              )
-            `,
-          )
-          .eq("coach_id", userId)
-          .eq("booking_status", "confirmed"),
-      ]);
+                team_name,
+                age_group,
+                team_color,
+                team_players (
+                  player_id,
+                  squad_order,
+                  player:players (
+                    id,
+                    player_name
+                  )
+                )
+              `,
+            )
+            .eq("coach_id", userId)
+            .order("team_name", { ascending: true }),
+          supabase
+            .from("session_bookings")
+            .select(
+              `
+                session_id,
+                player_id,
+                booking_status,
+                player:players (
+                  id,
+                  player_name
+                )
+              `,
+            )
+            .eq("coach_id", userId)
+            .eq("booking_status", "confirmed"),
+          supabase
+            .from("session_attendance")
+            .select(ATTENDANCE_SELECT)
+            .eq("coach_id", userId),
+        ]);
 
-      if (sessionsError || playersError || bookingsError) {
-        setError(
-          sessionsError?.message ??
-            playersError?.message ??
-            bookingsError?.message ??
-            "Could not load registers.",
+        if (
+          sessionsError ||
+          playersError ||
+          teamsError ||
+          bookingsError ||
+          attendanceError
+        ) {
+          setError(
+            sessionsError?.message ??
+              playersError?.message ??
+              teamsError?.message ??
+              bookingsError?.message ??
+              attendanceError?.message ??
+              "Could not load registers.",
+          );
+          return;
+        }
+
+        const queued = await refreshPendingCount();
+        const mergedAttendance = mergeAttendanceRows(
+          (attendanceData ?? []) as AttendanceRow[],
+          queued,
         );
-        return;
+
+        setPlayers((playersData ?? []) as PlayerRow[]);
+        setTeams((teamsData ?? []) as TeamOption[]);
+        setSessionBookings((bookingsData ?? []) as SessionBookingLink[]);
+        setSessions((sessionsData ?? []) as RegisterSession[]);
+        setAttendanceRows(mergedAttendance);
+        setNoteDrafts(
+          Object.fromEntries(
+            mergedAttendance.map((row) => [
+              queueKey(row.coach_id, row.session_id, row.player_id),
+              row.notes ?? "",
+            ]),
+          ),
+        );
+      } catch (caughtError: unknown) {
+        setError(getErrorMessage(caughtError));
+      } finally {
+        setLoading(false);
       }
-
-      const safeSessions = (sessionsData ?? []) as RegisterSession[];
-      setPlayers((playersData ?? []) as PlayerRow[]);
-      setSessionBookings((bookingsData ?? []) as SessionBookingLink[]);
-      const queued = await refreshPendingCount();
-      const queuedBySession = new Map(
-        queued
-          .filter((change) => change.coachId === userId)
-          .map((change) => [change.sessionId, change.attendanceStatus]),
-      );
-
-      setSessions(
-        safeSessions.map((session) => ({
-          ...session,
-          attendance_status:
-            queuedBySession.get(session.id) ?? session.attendance_status,
-        })),
-      );
-    } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
-    } finally {
-      setLoading(false);
-    }
-  }, [refreshPendingCount]);
+    },
+    [refreshPendingCount],
+  );
 
   const syncQueuedChanges = useCallback(async () => {
     if (
       syncingRef.current ||
-      (typeof navigator !== "undefined" && !navigator.onLine)
+      (typeof navigator !== "undefined" && !navigator.onLine) ||
+      !coachId
     ) {
       return;
     }
@@ -435,17 +678,25 @@ export function RegistersManager() {
 
     try {
       const supabase = createClient();
+      const { error: upsertError } = await supabase
+        .from("session_attendance")
+        .upsert(
+          queued.map((change) => ({
+            coach_id: change.coachId,
+            session_id: change.sessionId,
+            player_id: change.playerId,
+            status: change.status,
+            notes: change.notes,
+            recorded_at: change.recordedAt,
+          })),
+          { onConflict: "session_id,player_id" },
+        );
+
+      if (upsertError) {
+        throw upsertError;
+      }
+
       for (const change of queued) {
-        const { error: updateError } = await supabase
-          .from("sessions")
-          .update({ attendance_status: change.attendanceStatus })
-          .eq("id", change.sessionId)
-          .eq("coach_id", change.coachId);
-
-        if (updateError) {
-          throw updateError;
-        }
-
         await deleteQueuedChange(change.id);
       }
 
@@ -458,7 +709,7 @@ export function RegistersManager() {
     } finally {
       syncingRef.current = false;
     }
-  }, [refreshPendingCount]);
+  }, [coachId, refreshPendingCount]);
 
   useEffect(() => {
     function handleOnline() {
@@ -521,70 +772,233 @@ export function RegistersManager() {
     };
   }, [loadRegisters, syncQueuedChanges]);
 
-  async function queueAttendanceChange(
-    userId: string,
-    sessionId: string,
-    nextStatus: AttendanceStatus,
-  ) {
-    await saveQueuedChange({
-      id: queueKey(userId, sessionId),
-      coachId: userId,
-      sessionId,
-      attendanceStatus: nextStatus,
-      updatedAt: new Date().toISOString(),
+  function setBusy(nextKeys: string[], active: boolean) {
+    setBusyKeys((current) => {
+      if (active) {
+        return [...new Set([...current, ...nextKeys])];
+      }
+      return current.filter((key) => !nextKeys.includes(key));
     });
+  }
+
+  async function queueAttendanceChange(change: OfflineAttendanceChange) {
+    await saveQueuedChange(change);
     await refreshPendingCount();
   }
 
-  async function updateAttendanceStatus(
-    sessionId: string,
-    nextStatus: AttendanceStatus,
+  async function persistAttendanceRows(
+    rows: Array<{
+      session_id: string;
+      player_id: string;
+      status: PlayerAttendanceStatus;
+      notes: string | null;
+      recorded_at: string;
+    }>,
   ) {
+    if (!coachId) return;
+    const supabase = createClient();
+    const { error: upsertError } = await supabase.from("session_attendance").upsert(
+      rows.map((row) => ({
+        coach_id: coachId,
+        ...row,
+      })),
+      { onConflict: "session_id,player_id" },
+    );
+
+    if (upsertError) {
+      throw upsertError;
+    }
+  }
+
+  function updateAttendanceState(nextRows: AttendanceRow[]) {
+    setAttendanceRows((current) => {
+      const byKey = new Map(
+        current.map((row) => [
+          queueKey(row.coach_id, row.session_id, row.player_id),
+          row,
+        ]),
+      );
+      for (const row of nextRows) {
+        byKey.set(queueKey(row.coach_id, row.session_id, row.player_id), row);
+      }
+      return [...byKey.values()];
+    });
+  }
+
+  async function applyAttendanceChange(args: {
+    sessionId: string;
+    playerId: string;
+    status: PlayerAttendanceStatus;
+    notes?: string | null;
+  }) {
     if (!coachId) {
       setActionError("You must be signed in to update registers.");
       return;
     }
 
+    const key = queueKey(coachId, args.sessionId, args.playerId);
+    const recordedAt = new Date().toISOString();
+    const notes = args.notes?.trim() ? args.notes.trim() : null;
+    const nextRow: AttendanceRow = {
+      id: attendanceByKey.get(key)?.id ?? key,
+      coach_id: coachId,
+      session_id: args.sessionId,
+      player_id: args.playerId,
+      status: args.status,
+      notes,
+      recorded_at: recordedAt,
+    };
+
     setActionError(null);
-    setSessions((current) =>
-      current.map((session) =>
-        session.id === sessionId
-          ? { ...session, attendance_status: nextStatus }
-          : session,
-      ),
-    );
+    updateAttendanceState([nextRow]);
+    setNoteDrafts((current) => ({ ...current, [key]: notes ?? "" }));
 
     if (!online) {
-      await queueAttendanceChange(coachId, sessionId, nextStatus);
+      await queueAttendanceChange({
+        id: key,
+        coachId: coachId,
+        sessionId: args.sessionId,
+        playerId: args.playerId,
+        status: args.status,
+        notes,
+        recordedAt,
+      });
       setSyncState("offline");
       return;
     }
 
-    setUpdatingId(sessionId);
+    setBusy([key], true);
     try {
-      const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("sessions")
-        .update({ attendance_status: nextStatus })
-        .eq("id", sessionId)
-        .eq("coach_id", coachId);
-
-      if (updateError) {
-        throw updateError;
-      }
-
-      await deleteQueuedChange(queueKey(coachId, sessionId));
+      await persistAttendanceRows([
+        {
+          session_id: args.sessionId,
+          player_id: args.playerId,
+          status: args.status,
+          notes,
+          recorded_at: recordedAt,
+        },
+      ]);
+      await deleteQueuedChange(key);
       await refreshPendingCount();
       setSyncState("synced");
     } catch (caughtError: unknown) {
-      await queueAttendanceChange(coachId, sessionId, nextStatus);
+      await queueAttendanceChange({
+        id: key,
+        coachId,
+        sessionId: args.sessionId,
+        playerId: args.playerId,
+        status: args.status,
+        notes,
+        recordedAt,
+      });
       setActionError(
         `${getErrorMessage(caughtError)} Saved locally and will sync when online.`,
       );
-      setSyncState(typeof navigator !== "undefined" && navigator.onLine ? "online" : "offline");
+      setSyncState(
+        typeof navigator !== "undefined" && navigator.onLine ? "online" : "offline",
+      );
     } finally {
-      setUpdatingId(null);
+      setBusy([key], false);
     }
+  }
+
+  async function applyBulkAttendance(
+    session: RegisterSession,
+    playerIds: string[],
+    status: PlayerAttendanceStatus,
+  ) {
+    if (!coachId || playerIds.length === 0) return;
+
+    const recordedAt = new Date().toISOString();
+    const keys = playerIds.map((playerId) => queueKey(coachId, session.id, playerId));
+    const optimisticRows = playerIds.map((playerId) => {
+      const key = queueKey(coachId, session.id, playerId);
+      return {
+        id: attendanceByKey.get(key)?.id ?? key,
+        coach_id: coachId,
+        session_id: session.id,
+        player_id: playerId,
+        status,
+        notes: noteDrafts[key]?.trim() || null,
+        recorded_at: recordedAt,
+      } satisfies AttendanceRow;
+    });
+
+    setActionError(null);
+    updateAttendanceState(optimisticRows);
+
+    if (!online) {
+      for (const row of optimisticRows) {
+        await queueAttendanceChange({
+          id: queueKey(coachId, row.session_id, row.player_id),
+          coachId: coachId,
+          sessionId: row.session_id,
+          playerId: row.player_id,
+          status: row.status,
+          notes: row.notes,
+          recordedAt,
+        });
+      }
+      setSyncState("offline");
+      return;
+    }
+
+    setBulkUpdatingSessionId(session.id);
+    setBusy(keys, true);
+    try {
+      await persistAttendanceRows(
+        optimisticRows.map((row) => ({
+          session_id: row.session_id,
+          player_id: row.player_id,
+          status: row.status,
+          notes: row.notes,
+          recorded_at: row.recorded_at,
+        })),
+      );
+      for (const key of keys) {
+        await deleteQueuedChange(key);
+      }
+      await refreshPendingCount();
+      setSyncState("synced");
+    } catch (caughtError: unknown) {
+      for (const row of optimisticRows) {
+        await queueAttendanceChange({
+          id: queueKey(coachId, row.session_id, row.player_id),
+          coachId: coachId,
+          sessionId: row.session_id,
+          playerId: row.player_id,
+          status: row.status,
+          notes: row.notes,
+          recordedAt,
+        });
+      }
+      setActionError(
+        `${getErrorMessage(caughtError)} Bulk changes were saved locally and will sync when online.`,
+      );
+      setSyncState(
+        typeof navigator !== "undefined" && navigator.onLine ? "online" : "offline",
+      );
+    } finally {
+      setBulkUpdatingSessionId(null);
+      setBusy(keys, false);
+    }
+  }
+
+  async function handleNoteBlur(sessionId: string, playerId: string) {
+    if (!coachId) return;
+    const key = queueKey(coachId, sessionId, playerId);
+    const attendance = attendanceByKey.get(key);
+    if (!attendance) return;
+
+    const nextNote = noteDrafts[key]?.trim() || "";
+    if ((attendance.notes ?? "") === nextNote) return;
+
+    await applyAttendanceChange({
+      sessionId,
+      playerId,
+      status: attendance.status,
+      notes: nextNote,
+    });
   }
 
   const activeSyncState: SyncState = !online ? "offline" : syncState;
@@ -595,13 +1009,13 @@ export function RegistersManager() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              Group Registers
+              Player Registers
             </h1>
             <FeatureInfoTooltip featureKey="registers" />
           </div>
           <p className="text-muted mt-1 text-sm">
-            Mark attendance on the pitch, keep working offline, and sync when
-            signal returns.
+            Mark attendance for every player individually, apply bulk updates fast,
+            and keep everything syncing from the pitch.
           </p>
         </div>
         <StatusIndicator state={activeSyncState} pendingCount={pendingCount} />
@@ -615,8 +1029,8 @@ export function RegistersManager() {
               Offline mode active
             </p>
             <p className="text-muted mt-1">
-              Attendance changes are being saved locally. CoachFlow will sync
-              them automatically when your connection returns.
+              Player attendance changes are being stored locally and will sync
+              automatically when your connection returns.
             </p>
           </div>
         </div>
@@ -630,11 +1044,11 @@ export function RegistersManager() {
             </div>
             <div>
               <h2 className="text-lg font-semibold tracking-tight">
-                Offline-ready attendance
+                Offline-ready player attendance
               </h2>
               <p className="text-muted mt-1 text-sm">
-                Latest changes per session are de-duplicated locally before
-                syncing to Supabase.
+                Every player mark is queued independently, so bulk updates and
+                manual overrides stay intact when signal drops.
               </p>
             </div>
           </div>
@@ -660,11 +1074,31 @@ export function RegistersManager() {
       </section>
 
       <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Session registers</h2>
-          {!loading ? (
-            <span className="text-muted text-sm">{sessions.length} sessions</span>
-          ) : null}
+          <div className="flex items-center gap-3">
+            {teams.length > 0 ? (
+              <select
+                value={teamFilter}
+                onChange={(event) => setTeamFilter(event.target.value)}
+                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              >
+                <option value="all">All teams</option>
+                <option value="none">No linked team</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {getTeamDisplayName(team)}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {!loading ? (
+              <span className="text-muted text-sm">
+                {visibleSessions.length} session
+                {visibleSessions.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         {error ? (
@@ -686,105 +1120,207 @@ export function RegistersManager() {
           </div>
         ) : null}
 
-        {!loading && !error && sessions.length === 0 ? (
+        {!loading && !error && visibleSessions.length === 0 ? (
           <div className="glass-panel rounded-2xl p-8 text-center">
             <CalendarCheck className="text-muted mx-auto size-8" aria-hidden />
             <p className="mt-3 font-medium">No sessions to register</p>
             <p className="text-muted mt-1 text-sm">
-              Schedule sessions first, then use this page for group attendance.
+              Schedule sessions first, then mark attendance player by player here.
             </p>
           </div>
         ) : null}
 
-        {!loading && !error && sessions.length > 0 ? (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {sessions.map((session) => {
-              const assignedNames = getAssignedPlayerNames(
+        {!loading && !error && visibleSessions.length > 0 ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {visibleSessions.map((session) => {
+              const team = unwrapSingleRelation(session.team);
+              const roster = buildSessionRoster({
                 session,
                 playerNameById,
                 sessionBookings,
+                teamPlayersByTeamId,
+                teamOrderByPlayerId,
+                attendanceByKey,
+                noteDrafts,
+              });
+              const summary = getAttendanceSummary(
+                roster
+                  .map((player) => player.attendance)
+                  .filter((row): row is AttendanceRow => Boolean(row)),
               );
 
               return (
-              <article
-                key={session.id}
-                className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-lg font-semibold tracking-tight">
-                      {getRegisterTitle(session, playerNameById, sessionBookings)}
-                    </h3>
-                    <p className="text-muted mt-1 text-sm">
-                      {formatSessionDate(session.session_date)}
+                <article
+                  key={session.id}
+                  className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-semibold tracking-tight">
+                        {getRegisterTitle(session)}
+                      </h3>
+                      <p className="text-muted mt-1 text-sm">
+                        {formatSessionDate(session.session_date)}
+                      </p>
+                    </div>
+                    {bulkUpdatingSessionId === session.id ? (
+                      <span className="bg-accent/10 text-accent ring-accent/20 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1">
+                        bulk updating
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                    <span className="bg-accent/10 text-accent ring-accent/20 inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ring-1">
+                      <Users className="size-3.5" aria-hidden />
+                      {roster.length} rostered player{roster.length === 1 ? "" : "s"}
+                    </span>
+                    {team ? (
+                      <span className="border-border text-muted inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-medium">
+                        <span
+                          className="inline-flex size-2.5 rounded-full"
+                          style={{
+                            backgroundColor:
+                              team.team_color ?? "var(--color-accent)",
+                          }}
+                        />
+                        {getTeamDisplayName(team)}
+                      </span>
+                    ) : null}
+                    <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
+                      {session.session_type ?? "Session"}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Present / late</p>
+                      <p className="mt-1 font-medium">
+                        {summary.present + summary.late} recorded
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Absent / unavailable</p>
+                      <p className="mt-1 font-medium">
+                        {summary.absent + summary.injured + summary.excused} recorded
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-sm">
+                    <p className="inline-flex items-center gap-1.5">
+                      <MapPin className="text-muted size-3.5" aria-hidden />
+                      {session.location ?? "No location"}
                     </p>
                   </div>
-                  {queuedSessionIds.includes(session.id) ? (
-                    <span className="bg-amber-500/10 text-amber-700 ring-amber-500/25 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 dark:text-amber-300">
-                      local queue
-                    </span>
-                  ) : null}
-                </div>
 
-                <div className="mt-4 space-y-2 text-sm">
-                  <p className="inline-flex items-center gap-1.5">
-                    <Users className="text-muted size-3.5" aria-hidden />
-                    {assignedNames.length} rostered player
-                    {assignedNames.length === 1 ? "" : "s"}
-                  </p>
-                  <p>
-                    <span className="text-muted">Type:</span>{" "}
-                    {session.session_type ?? "N/A"}
-                  </p>
-                  <p className="inline-flex items-center gap-1.5">
-                    <MapPin className="text-muted size-3.5" aria-hidden />
-                    {session.location ?? "No location"}
-                  </p>
-                </div>
-
-                {assignedNames.length > 0 ? (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {assignedNames.map((name) => (
-                      <span
-                        key={`${session.id}-${name}`}
-                        className="rounded-full bg-black/[0.02] px-3 py-1 text-sm dark:bg-white/[0.03]"
-                      >
-                        {name}
-                      </span>
-                    ))}
+                  <div className="mt-5">
+                    <p className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
+                      Bulk actions
+                    </p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      {PLAYER_ATTENDANCE_STATUS_OPTIONS.map((status) => (
+                        <AttendanceStatusButton
+                          key={`${session.id}-${status}`}
+                          status={status}
+                          active={false}
+                          disabled={
+                            roster.length === 0 || bulkUpdatingSessionId === session.id
+                          }
+                          onClick={() =>
+                            void applyBulkAttendance(
+                              session,
+                              roster.map((player) => player.player_id),
+                              status,
+                            )
+                          }
+                        />
+                      ))}
+                    </div>
                   </div>
-                ) : null}
 
-                <div className="mt-5">
-                  <p className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
-                    Mark all assigned players
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {attendanceOptions.map((status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        disabled={updatingId === session.id}
-                        onClick={() => void updateAttendanceStatus(session.id, status)}
-                        className={cn(
-                          "border-border hover:bg-black/[0.03] rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]",
-                          session.attendance_status === status &&
-                            "bg-accent/10 text-accent ring-accent/20 border-accent/30 ring-1",
-                        )}
-                      >
-                        {updatingId === session.id && session.attendance_status === status ? (
-                          <span className="inline-flex items-center gap-2">
-                            <Loader2 className="size-4 animate-spin" aria-hidden />
-                            Saving
-                          </span>
-                        ) : (
-                          status
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </article>
+                  {roster.length > 0 ? (
+                    <div className="mt-5 space-y-3">
+                      {roster.map((player) => {
+                        const key = queueKey(
+                          session.coach_id,
+                          session.id,
+                          player.player_id,
+                        );
+                        const activeStatus = player.attendance?.status ?? null;
+                        const busy = busyKeys.includes(key);
+                        const queued = queuedAttendanceKeys.includes(key);
+
+                        return (
+                          <div
+                            key={key}
+                            className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]"
+                          >
+                            <div className="flex flex-col gap-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="truncate font-semibold">
+                                    {player.player_name}
+                                  </p>
+                                  <p className="text-muted mt-1 text-xs">
+                                    {activeStatus
+                                      ? `${getAttendanceLabel(activeStatus)} · ${formatRecordedAt(
+                                          player.attendance?.recorded_at ?? null,
+                                        )}`
+                                      : "Not marked yet"}
+                                  </p>
+                                </div>
+                                {queued ? (
+                                  <span className="bg-amber-500/10 text-amber-700 ring-amber-500/25 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 dark:text-amber-300">
+                                    local queue
+                                  </span>
+                                ) : null}
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                                {PLAYER_ATTENDANCE_STATUS_OPTIONS.map((status) => (
+                                  <AttendanceStatusButton
+                                    key={`${key}-${status}`}
+                                    status={status}
+                                    active={activeStatus === status}
+                                    disabled={busy}
+                                    onClick={() =>
+                                      void applyAttendanceChange({
+                                        sessionId: session.id,
+                                        playerId: player.player_id,
+                                        status,
+                                        notes: noteDrafts[key] ?? "",
+                                      })
+                                    }
+                                  />
+                                ))}
+                              </div>
+
+                              <input
+                                value={noteDrafts[key] ?? ""}
+                                onChange={(event) =>
+                                  setNoteDrafts((current) => ({
+                                    ...current,
+                                    [key]: event.target.value,
+                                  }))
+                                }
+                                onBlur={() => void handleNoteBlur(session.id, player.player_id)}
+                                placeholder="Optional note, e.g. arrived after warm-up"
+                                disabled={busy}
+                                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-5 rounded-2xl bg-black/[0.02] p-4 text-sm text-muted dark:bg-white/[0.03]">
+                      No rostered players yet. Link a team or assign players to this
+                      session first.
+                    </div>
+                  )}
+                </article>
               );
             })}
           </div>

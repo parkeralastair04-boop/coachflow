@@ -20,10 +20,12 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: "/favicon.ico" },
-      { url: "/logo.png", type: "image/png" },
+      { url: "/app-icon/32", type: "image/png", sizes: "32x32" },
+      { url: "/app-icon/192", type: "image/png", sizes: "192x192" },
+      { url: "/app-icon/512", type: "image/png", sizes: "512x512" },
     ],
-    apple: [{ url: "/logo.png", type: "image/png" }],
+    shortcut: [{ url: "/app-icon/32", type: "image/png", sizes: "32x32" }],
+    apple: [{ url: "/app-icon/180", type: "image/png", sizes: "180x180" }],
   },
 };
 

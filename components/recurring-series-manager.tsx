@@ -244,8 +244,8 @@ export function RecurringSeriesManager({
             Recurring coaching subscriptions
           </h2>
           <p className="text-muted mt-1 text-sm">
-            Publish weekly recurring coaching products with monthly child billing and
-            rolling future session generation.
+            Create weekly coaching subscriptions with simple monthly billing and a
+            seamless parent booking experience.
           </p>
         </div>
       </div>
@@ -403,7 +403,7 @@ export function RecurringSeriesManager({
 
         <div>
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesRollingWeeks">
-            Rolling weeks generated
+            Weeks planned ahead
           </label>
           <input
             id="seriesRollingWeeks"
@@ -473,8 +473,8 @@ export function RecurringSeriesManager({
 
         <div className="rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
           <p className="font-medium">
-            Parents will subscribe one child at a time, and each active child subscription
-            auto-populates future registers through recurring session bookings.
+            Parents subscribe one child at a time, while CoachFlow keeps upcoming
+            sessions, spaces, and attendance in sync automatically.
           </p>
         </div>
 

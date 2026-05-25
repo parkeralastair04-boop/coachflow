@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { BrandMark } from "@/components/brand-mark";
 import {
   BRAND_LOGO_SIZES,
   BRAND_LOGO_SRC,
@@ -21,6 +22,26 @@ export function BrandLogo({
   src = BRAND_LOGO_SRC,
   alt = "CoachFlow",
 }: BrandLogoProps) {
+  const logoSize = size ? BRAND_LOGO_SIZES[size] : undefined;
+
+  if (src === BRAND_LOGO_SRC) {
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center leading-none",
+          logoSize?.wrapper,
+          className,
+        )}
+      >
+        <BrandMark className={cn("text-navy dark:text-white", logoSize?.icon)} />
+        <span className={cn("font-semibold tracking-tight whitespace-nowrap", logoSize?.text)}>
+          <span className="text-navy dark:text-white">Coach</span>
+          <span className="text-accent">Flow</span>
+        </span>
+      </span>
+    );
+  }
+
   return (
     <Image
       src={src}
@@ -30,8 +51,8 @@ export function BrandLogo({
       priority={priority}
       unoptimized={src.startsWith("http")}
       className={cn(
-        "w-auto shrink-0 object-contain",
-        size ? BRAND_LOGO_SIZES[size] : undefined,
+        "w-auto max-w-full shrink-0 object-contain",
+        logoSize?.image,
         className,
       )}
     />

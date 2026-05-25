@@ -5,9 +5,14 @@ import {
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
+import { getPositionSummary, type PlayerPositionOption, type PreferredFootOption } from "@/lib/player-profile";
 
 type ReportPdfInput = {
   playerName: string;
+  preferredFoot?: PreferredFootOption;
+  primaryPosition?: PlayerPositionOption | null;
+  secondaryPositions?: PlayerPositionOption[];
+  teamNames?: string[];
   report: string;
   date?: Date;
 };
@@ -130,6 +135,10 @@ export function getReportPdfFilename(playerName: string, date = new Date()) {
 
 export async function generateReportPdf({
   playerName,
+  preferredFoot = "Unknown",
+  primaryPosition = null,
+  secondaryPositions = [],
+  teamNames = [],
   report,
   date = new Date(),
 }: ReportPdfInput): Promise<Uint8Array> {
@@ -182,6 +191,32 @@ export async function generateReportPdf({
     font: regularFont,
     color: rgb(0.38, 0.43, 0.5),
   });
+
+  y -= 18;
+  page.drawText(
+    `Profile: ${getPositionSummary({
+      primary_position: primaryPosition,
+      secondary_positions: secondaryPositions,
+    })} · ${preferredFoot} foot`,
+    {
+      x: margin,
+      y,
+      size: 10.5,
+      font: regularFont,
+      color: rgb(0.38, 0.43, 0.5),
+    },
+  );
+
+  if (teamNames.length > 0) {
+    y -= 18;
+    page.drawText(`Teams: ${teamNames.join(", ")}`, {
+      x: margin,
+      y,
+      size: 10.5,
+      font: regularFont,
+      color: rgb(0.38, 0.43, 0.5),
+    });
+  }
 
   y -= 28;
   page.drawLine({

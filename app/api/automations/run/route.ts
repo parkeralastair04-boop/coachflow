@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isMissedAttendanceStatus, type PlayerAttendanceStatus } from "@/lib/attendance";
 import {
   renderAutomationText,
   type AutomationRow,
@@ -19,12 +20,17 @@ type PlayerRow = {
 type SessionRow = {
   id: string;
   player_id: string | null;
+  team_id: string | null;
   session_date: string;
-  attendance_status: string;
 };
 
 type SessionPlayerRow = {
   session_id: string;
+  player_id: string;
+};
+
+type TeamPlayerRow = {
+  team_id: string;
   player_id: string;
 };
 
@@ -38,7 +44,13 @@ type SessionAssignment = {
   session_id: string;
   player_id: string;
   session_date: string;
-  attendance_status: string;
+};
+
+type AttendanceRecord = {
+  session_id: string;
+  player_id: string;
+  status: PlayerAttendanceStatus;
+  recorded_at: string;
 };
 
 type SubscriptionRow = {
@@ -120,8 +132,16 @@ function buildSessionAssignments(args: {
   sessions: SessionRow[];
   sessionPlayers: SessionPlayerRow[];
   sessionBookings: SessionBookingRow[];
+  teamPlayers: TeamPlayerRow[];
 }): SessionAssignment[] {
   const sessionPlayersBySession = new Map<string, Set<string>>();
+  const teamPlayersByTeam = new Map<string, Set<string>>();
+
+  for (const membership of args.teamPlayers) {
+    const current = teamPlayersByTeam.get(membership.team_id) ?? new Set<string>();
+    current.add(membership.player_id);
+    teamPlayersByTeam.set(membership.team_id, current);
+  }
 
   for (const link of args.sessionPlayers) {
     const current = sessionPlayersBySession.get(link.session_id) ?? new Set<string>();
@@ -138,6 +158,11 @@ function buildSessionAssignments(args: {
 
   return args.sessions.flatMap((session) => {
     const assignedPlayerIds = sessionPlayersBySession.get(session.id) ?? new Set<string>();
+    if (assignedPlayerIds.size === 0 && session.team_id) {
+      for (const playerId of teamPlayersByTeam.get(session.team_id) ?? new Set<string>()) {
+        assignedPlayerIds.add(playerId);
+      }
+    }
     if (assignedPlayerIds.size === 0 && session.player_id) {
       assignedPlayerIds.add(session.player_id);
     }
@@ -146,7 +171,6 @@ function buildSessionAssignments(args: {
       session_id: session.id,
       player_id: playerId,
       session_date: session.session_date,
-      attendance_status: session.attendance_status,
     }));
   });
 }
@@ -155,17 +179,25 @@ function candidatesForAutomation(args: {
   automation: AutomationRow;
   players: PlayerRow[];
   sessionAssignments: SessionAssignment[];
+  attendanceRecords: AttendanceRecord[];
   subscriptions: SubscriptionRow[];
   reports: ReportRow[];
   now: Date;
 }): AutomationCandidate[] {
-  const { automation, players, sessionAssignments, subscriptions, reports, now } = args;
+  const {
+    automation,
+    players,
+    sessionAssignments,
+    attendanceRecords,
+    subscriptions,
+    reports,
+    now,
+  } = args;
   const byPlayer = new Map(players.map((player) => [player.id, player]));
 
   switch (automation.type as AutomationType) {
     case "session_reminder":
       return sessionAssignments
-        .filter((session) => session.attendance_status === "scheduled")
         .filter((session) => {
           const hoursUntil =
             (new Date(session.session_date).getTime() - now.getTime()) / 3_600_000;
@@ -237,17 +269,17 @@ function candidatesForAutomation(args: {
     case "attendance_alert":
       return players.flatMap((player) => {
         if (!player.parent_email) return [];
-        const recent = sessionAssignments
-          .filter((session) => session.player_id === player.id)
+        const recent = attendanceRecords
+          .filter((record) => record.player_id === player.id)
           .sort(
             (a, b) =>
-              new Date(b.session_date).getTime() -
-              new Date(a.session_date).getTime(),
+              new Date(b.recorded_at).getTime() -
+              new Date(a.recorded_at).getTime(),
           )
           .slice(0, automation.timing_offset);
         const missed =
           recent.length >= automation.timing_offset &&
-          recent.every((session) => session.attendance_status === "missed");
+          recent.every((record) => isMissedAttendanceStatus(record.status));
         return missed ? [{ automation, player, values: playerValues(player) }] : [];
       });
   }
@@ -284,6 +316,8 @@ export async function POST() {
       playersResult,
       sessionsResult,
       sessionPlayersResult,
+      teamPlayersResult,
+      attendanceResult,
       sessionBookingsResult,
       subscriptionsResult,
       reportsResult,
@@ -299,11 +333,18 @@ export async function POST() {
         .eq("coach_id", user.id),
       supabase
         .from("sessions")
-        .select("id, player_id, session_date, attendance_status")
+        .select("id, player_id, team_id, session_date")
         .eq("coach_id", user.id),
       supabase
         .from("session_players")
         .select("session_id, player_id"),
+      supabase
+        .from("team_players")
+        .select("team_id, player_id"),
+      supabase
+        .from("session_attendance")
+        .select("session_id, player_id, status, recorded_at")
+        .eq("coach_id", user.id),
       supabase
         .from("session_bookings")
         .select("session_id, player_id, booking_status")
@@ -323,6 +364,8 @@ export async function POST() {
       playersResult.error ??
       sessionsResult.error ??
       sessionPlayersResult.error ??
+      teamPlayersResult.error ??
+      attendanceResult.error ??
       sessionBookingsResult.error ??
       subscriptionsResult.error ??
       reportsResult.error;
@@ -337,8 +380,10 @@ export async function POST() {
     const sessionAssignments = buildSessionAssignments({
       sessions,
       sessionPlayers: (sessionPlayersResult.data ?? []) as SessionPlayerRow[],
+      teamPlayers: (teamPlayersResult.data ?? []) as TeamPlayerRow[],
       sessionBookings: (sessionBookingsResult.data ?? []) as SessionBookingRow[],
     });
+    const attendanceRecords = (attendanceResult.data ?? []) as AttendanceRecord[];
     const subscriptions = (subscriptionsResult.data ?? []) as SubscriptionRow[];
     const reports = (reportsResult.data ?? []) as ReportRow[];
     const resend = getResendServerClient();
@@ -348,6 +393,7 @@ export async function POST() {
         automation,
         players,
         sessionAssignments,
+        attendanceRecords,
         subscriptions,
         reports,
         now,

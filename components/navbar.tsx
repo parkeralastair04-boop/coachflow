@@ -17,8 +17,8 @@ export function Navbar({ className, variant = "marketing" }: NavbarProps) {
         className,
       )}
     >
-      <nav className="mx-auto flex min-h-16 max-w-6xl items-center justify-between px-4 py-2 sm:min-h-[5.5rem] sm:px-6 sm:py-3 lg:px-8">
-        <Link href="/" className="inline-flex items-center" aria-label="CoachFlow home">
+      <nav className="mx-auto flex min-h-[4.75rem] max-w-6xl items-center justify-between px-4 py-1.5 sm:min-h-[6rem] sm:px-6 sm:py-2 lg:px-8">
+        <Link href="/" className="inline-flex items-center leading-none" aria-label="CoachFlow home">
           <BrandLogo size="navbarResponsive" priority />
         </Link>
 

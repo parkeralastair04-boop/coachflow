@@ -19,6 +19,7 @@ import {
   PoundSterling,
   Tent,
   UserSquare2,
+  Shield,
   Users,
   Wallet,
 } from "lucide-react";
@@ -53,6 +54,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     icon: Users,
     items: [
       { href: "/dashboard/players", label: "Players", icon: UserSquare2, feature: "players" },
+      { href: "/dashboard/teams", label: "Teams", icon: Shield },
       {
         href: "/dashboard/availability",
         label: "Availability",

@@ -12,6 +12,13 @@ import {
 } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
+import {
+  isCountedAttendanceStatus,
+  isMissedAttendanceStatus,
+  isPositiveAttendanceStatus,
+  type PlayerAttendanceStatus,
+} from "@/lib/attendance";
+import { getTeamDisplayName, unwrapSingleRelation, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 import { summarizeSessionBookings } from "@/lib/session-booking-state";
 import {
@@ -20,8 +27,6 @@ import {
   resolveQueryError,
 } from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
-
-type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
 type PlayerRow = {
   id: string;
@@ -43,13 +48,29 @@ type SessionRow = {
   id: string;
   coach_id: string;
   player_id: string | null;
+  team_id: string | null;
   group_name: string | null;
   session_type: string | null;
   session_date: string;
-  attendance_status: AttendanceStatus;
   session_players: SessionPlayerLink[] | null;
   capacity: number;
   is_public: boolean;
+  team: TeamSummary[] | TeamSummary | null;
+};
+
+type SessionAttendanceRow = {
+  id: string;
+  session_id: string;
+  player_id: string;
+  status: PlayerAttendanceStatus;
+  recorded_at: string;
+};
+
+type TeamRow = {
+  id: string;
+  team_name: string;
+  age_group: string | null;
+  team_color: string | null;
 };
 
 type SessionBookingRow = {
@@ -108,7 +129,9 @@ type AttendanceBreakdownRow = {
 
 type AnalyticsData = {
   players: PlayerRow[];
+  teams: TeamRow[];
   sessions: SessionRow[];
+  attendance: SessionAttendanceRow[];
   sessionBookings: SessionBookingRow[];
   reports: ReportRow[];
   subscriptions: ParentSubscriptionRow[];
@@ -173,45 +196,6 @@ function subscriptionMrr(subscription: ParentSubscriptionRow): number {
 
 function isActiveSubscription(status: string): boolean {
   return status === "active" || status === "trialing";
-}
-
-function getAssignedPlayerLinks(
-  session: SessionRow,
-  playerNameById: Map<string, string>,
-  sessionBookings: SessionBookingRow[],
-): { player_id: string; player_name: string }[] {
-  const playersById = new Map<string, { player_id: string; player_name: string }>();
-
-  for (const booking of sessionBookings) {
-    if (booking.session_id !== session.id || booking.booking_status !== "confirmed") continue;
-    playersById.set(booking.player_id, {
-      player_id: booking.player_id,
-      player_name: playerNameById.get(booking.player_id) ?? "Unknown player",
-    });
-  }
-
-  const linkedPlayers = (session.session_players ?? [])
-    .map((link) => {
-      const player = Array.isArray(link.player) ? link.player[0] : link.player;
-      const resolved = {
-        player_id: link.player_id,
-        player_name:
-          player?.player_name ?? playerNameById.get(link.player_id) ?? "Unknown player",
-      };
-      playersById.set(link.player_id, resolved);
-      return resolved;
-    })
-    .filter((player) => Boolean(player.player_id));
-
-  if (linkedPlayers.length > 0 || playersById.size > 0) return [...playersById.values()];
-  return session.player_id
-    ? [
-        {
-          player_id: session.player_id,
-          player_name: playerNameById.get(session.player_id) ?? "Unknown player",
-        },
-      ]
-    : [];
 }
 
 function getGroupLabel(session: SessionRow): string {
@@ -357,7 +341,9 @@ export function AnalyticsManager() {
 
       const [
         playersResult,
+        teamsResult,
         sessionsResult,
+        attendanceResult,
         sessionBookingsResult,
         reportsResult,
         subscriptionsResult,
@@ -369,18 +355,28 @@ export function AnalyticsManager() {
           .select("id, player_name")
           .eq("coach_id", user.id),
         supabase
+          .from("teams")
+          .select("id, team_name, age_group, team_color")
+          .eq("coach_id", user.id),
+        supabase
           .from("sessions")
           .select(
             `
               id,
               coach_id,
               player_id,
+              team_id,
               group_name,
               session_type,
               session_date,
-              attendance_status,
               capacity,
               is_public,
+              team:teams (
+                id,
+                team_name,
+                age_group,
+                team_color
+              ),
               session_players (
                 player_id,
                 player:players (
@@ -390,6 +386,10 @@ export function AnalyticsManager() {
               )
             `,
           )
+          .eq("coach_id", user.id),
+        supabase
+          .from("session_attendance")
+          .select("id, session_id, player_id, status, recorded_at")
           .eq("coach_id", user.id),
         supabase
           .from("session_bookings")
@@ -420,6 +420,7 @@ export function AnalyticsManager() {
       const requiredResults = [
         { table: "players", error: playersResult.error },
         { table: "sessions", error: sessionsResult.error },
+        { table: "session_attendance", error: attendanceResult.error },
         { table: "session_bookings", error: sessionBookingsResult.error },
         { table: "progress_reports", error: reportsResult.error },
         { table: "parent_subscriptions", error: subscriptionsResult.error },
@@ -434,16 +435,20 @@ export function AnalyticsManager() {
         return;
       }
 
-      const optionalMissing = ["camps", "camp_enrolments"].filter((table, index) => {
-        const error = index === 0 ? campsResult.error : enrolmentsResult.error;
-        return isMissingTableError(error);
-      });
+      const optionalMissing = [
+        { table: "teams", error: teamsResult.error },
+        { table: "camps", error: campsResult.error },
+        { table: "camp_enrolments", error: enrolmentsResult.error },
+      ]
+        .filter((result) => isMissingTableError(result.error))
+        .map((result) => result.table);
       if (optionalMissing.length > 0) {
         setSetupTables(optionalMissing);
       }
 
       const firstError = [
         ...requiredResults,
+        { table: "teams", error: teamsResult.error },
         { table: "camps", error: campsResult.error },
         { table: "camp_enrolments", error: enrolmentsResult.error },
       ].find((result) => result.error)?.error;
@@ -459,7 +464,11 @@ export function AnalyticsManager() {
 
       setData({
         players: (playersResult.data ?? []) as PlayerRow[],
+        teams: isMissingTableError(teamsResult.error)
+          ? []
+          : ((teamsResult.data ?? []) as TeamRow[]),
         sessions: (sessionsResult.data ?? []) as SessionRow[],
+        attendance: (attendanceResult.data ?? []) as SessionAttendanceRow[],
         sessionBookings: (sessionBookingsResult.data ?? []) as SessionBookingRow[],
         reports: (reportsResult.data ?? []) as ReportRow[],
         subscriptions: (subscriptionsResult.data ?? []) as ParentSubscriptionRow[],
@@ -516,12 +525,16 @@ export function AnalyticsManager() {
       string,
       { label: string; total: number; attended: number }
     >();
+    const attendanceByTeam = new Map<
+      string,
+      { label: string; total: number; attended: number }
+    >();
     const attendanceByGroup = new Map<
       string,
       { label: string; total: number; attended: number }
     >();
-    let totalAssignments = 0;
-    let attendedAssignments = 0;
+    let totalAttendanceEvents = 0;
+    let attendedEvents = 0;
 
     const enrolledByCamp = new Map<string, number>();
     for (const enrolment of data.enrolments) {
@@ -574,53 +587,14 @@ export function AnalyticsManager() {
     const sessionVolumeSeries = emptySeries();
     const attendedSeries = emptySeries();
     const attendanceTotalSeries = emptySeries();
+    const missedSeries = emptySeries();
     const occupancySeries = emptySeries();
     const occupancySessionCounts = emptySeries();
     for (const session of data.sessions) {
       const key = monthKey(new Date(session.session_date));
       if (!(key in sessionVolumeSeries)) continue;
 
-      const assignedPlayers = getAssignedPlayerLinks(
-        session,
-        playerNameById,
-        data.sessionBookings,
-      );
-      const assignedCount = Math.max(assignedPlayers.length, 1);
-
       sessionVolumeSeries[key] += 1;
-      attendanceTotalSeries[key] += assignedCount;
-      totalAssignments += assignedCount;
-
-      if (session.attendance_status === "attended") {
-        attendedSeries[key] += assignedCount;
-        attendedAssignments += assignedCount;
-      }
-
-      for (const player of assignedPlayers) {
-        const current = attendanceByPlayer.get(player.player_id) ?? {
-          label: player.player_name,
-          total: 0,
-          attended: 0,
-        };
-        current.total += 1;
-        if (session.attendance_status === "attended") {
-          current.attended += 1;
-        }
-        attendanceByPlayer.set(player.player_id, current);
-      }
-
-      const groupLabel = getGroupLabel(session);
-      const currentGroup = attendanceByGroup.get(groupLabel) ?? {
-        label: groupLabel,
-        total: 0,
-        attended: 0,
-      };
-      currentGroup.total += assignedCount;
-      if (session.attendance_status === "attended") {
-        currentGroup.attended += assignedCount;
-      }
-      attendanceByGroup.set(groupLabel, currentGroup);
-
       if (session.is_public && session.capacity > 0) {
         const bookingSummary = summarizeSessionBookings(
           data.sessionBookings.filter((booking) => booking.session_id === session.id),
@@ -634,8 +608,74 @@ export function AnalyticsManager() {
       }
     }
 
+    const sessionsById = new Map(data.sessions.map((session) => [session.id, session]));
+    for (const entry of data.attendance) {
+      if (!isCountedAttendanceStatus(entry.status)) {
+        continue;
+      }
+
+      const session = sessionsById.get(entry.session_id);
+      const playerLabel = playerNameById.get(entry.player_id) ?? "Unknown player";
+      const currentPlayer = attendanceByPlayer.get(entry.player_id) ?? {
+        label: playerLabel,
+        total: 0,
+        attended: 0,
+      };
+      currentPlayer.total += 1;
+      if (isPositiveAttendanceStatus(entry.status)) {
+        currentPlayer.attended += 1;
+      }
+      attendanceByPlayer.set(entry.player_id, currentPlayer);
+
+      if (session) {
+        const team = unwrapSingleRelation(session.team);
+        if (team) {
+          const currentTeam = attendanceByTeam.get(team.id) ?? {
+            label: getTeamDisplayName(team),
+            total: 0,
+            attended: 0,
+          };
+          currentTeam.total += 1;
+          if (isPositiveAttendanceStatus(entry.status)) {
+            currentTeam.attended += 1;
+          }
+          attendanceByTeam.set(team.id, currentTeam);
+        }
+
+        const groupLabel = getGroupLabel(session);
+        const currentGroup = attendanceByGroup.get(groupLabel) ?? {
+          label: groupLabel,
+          total: 0,
+          attended: 0,
+        };
+        currentGroup.total += 1;
+        if (isPositiveAttendanceStatus(entry.status)) {
+          currentGroup.attended += 1;
+        }
+        attendanceByGroup.set(groupLabel, currentGroup);
+
+        const key = monthKey(new Date(session.session_date));
+        if (key in attendanceTotalSeries) {
+          attendanceTotalSeries[key] += 1;
+          totalAttendanceEvents += 1;
+          if (isPositiveAttendanceStatus(entry.status)) {
+            attendedSeries[key] += 1;
+            attendedEvents += 1;
+          }
+          if (isMissedAttendanceStatus(entry.status)) {
+            missedSeries[key] += 1;
+          }
+        }
+      } else {
+        totalAttendanceEvents += 1;
+        if (isPositiveAttendanceStatus(entry.status)) {
+          attendedEvents += 1;
+        }
+      }
+    }
+
     const attendanceRate =
-      totalAssignments > 0 ? (attendedAssignments / totalAssignments) * 100 : 0;
+      totalAttendanceEvents > 0 ? (attendedEvents / totalAttendanceEvents) * 100 : 0;
     const bookingRevenue = paidBookings.reduce((sum, booking) => sum + booking.amount / 100, 0);
     const recurringSubscriptionMrr = activeRecurringSubscriptions.reduce(
       (sum, subscription) => sum + subscriptionMrr(subscription),
@@ -671,9 +711,13 @@ export function AnalyticsManager() {
     return {
       metrics: {
         totalPlayers: data.players.length,
+        totalTeams: data.teams.length,
         totalSessions,
         publicSessions: publicSessions.length,
         attendanceRate,
+        missedSessions: data.attendance.filter((entry) =>
+          isMissedAttendanceStatus(entry.status),
+        ).length,
         reportsGenerated: data.reports.length,
         activeParentSubscriptions: activeSubscriptions.length,
         activeRecurringSubscriptions: activeRecurringSubscriptions.length,
@@ -709,6 +753,10 @@ export function AnalyticsManager() {
           label: monthLabel(key),
           value: sessionVolumeSeries[key],
         })),
+        missed: monthKeys.map((key) => ({
+          label: monthLabel(key),
+          value: missedSeries[key],
+        })),
         reports: monthKeys.map((key) => ({
           label: monthLabel(key),
           value: reportsSeries[key],
@@ -716,6 +764,13 @@ export function AnalyticsManager() {
       },
       breakdowns: {
         players: [...attendanceByPlayer.values()]
+          .map((row) => ({
+            ...row,
+            rate: row.total > 0 ? (row.attended / row.total) * 100 : 0,
+          }))
+          .sort((a, b) => b.total - a.total || b.rate - a.rate)
+          .slice(0, 6),
+        teams: [...attendanceByTeam.values()]
           .map((row) => ({
             ...row,
             rate: row.total > 0 ? (row.attended / row.total) * 100 : 0,
@@ -771,6 +826,12 @@ export function AnalyticsManager() {
               icon={Users}
             />
             <StatCard
+              label="Total Teams"
+              value={String(analytics.metrics.totalTeams)}
+              hint="Configured squads"
+              icon={Users}
+            />
+            <StatCard
               label="Total Sessions"
               value={String(analytics.metrics.totalSessions)}
               hint="Scheduled sessions"
@@ -785,8 +846,14 @@ export function AnalyticsManager() {
             <StatCard
               label="Attendance Rate"
               value={percentage(analytics.metrics.attendanceRate)}
-              hint="Attended sessions"
+              hint="Present or late marks"
               icon={TrendingUp}
+            />
+            <StatCard
+              label="Missed Sessions"
+              value={String(analytics.metrics.missedSessions)}
+              hint="Recorded absences"
+              icon={CalendarClock}
             />
             <StatCard
               label="AI Reports Generated"
@@ -875,17 +942,27 @@ export function AnalyticsManager() {
               accent="bg-violet-500"
             />
             <MiniBarChart
+              title="Missed-session trends"
+              points={analytics.charts.missed}
+              accent="bg-rose-500"
+            />
+            <MiniBarChart
               title="Reports generated by month"
               points={analytics.charts.reports}
               accent="bg-amber-500"
             />
           </section>
 
-          <section className="grid gap-6 xl:grid-cols-2">
+          <section className="grid gap-6 xl:grid-cols-3">
             <AttendanceBreakdownList
               title="Attendance per player"
               rows={analytics.breakdowns.players}
               emptyMessage="Assigned players will appear here once sessions are linked."
+            />
+            <AttendanceBreakdownList
+              title="Attendance per team"
+              rows={analytics.breakdowns.teams}
+              emptyMessage="Linked teams will appear here once sessions are attached to squads."
             />
             <AttendanceBreakdownList
               title="Attendance per group"

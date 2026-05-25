@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { isMissedAttendanceStatus, type PlayerAttendanceStatus } from "@/lib/attendance";
 import {
   isInsightPriority,
   type BusinessInsight,
@@ -11,6 +12,10 @@ import { hasFeatureAccess } from "@/lib/subscription";
 type PlayerRow = {
   id: string;
   player_name: string;
+  preferred_foot: string;
+  primary_position: string | null;
+  secondary_positions: string[];
+  team_names: string[];
   parent_name: string | null;
   parent_email: string | null;
 };
@@ -18,9 +23,35 @@ type PlayerRow = {
 type SessionRow = {
   id: string;
   player_id: string | null;
+  team_id?: string | null;
+  team_name?: string | null;
   session_date: string;
-  attendance_status: string;
-  session_players?: { player_id: string }[] | null;
+  attendance_status: PlayerAttendanceStatus;
+};
+
+type AttendanceQueryRow = {
+  session_id: string;
+  player_id: string;
+  status: PlayerAttendanceStatus;
+  recorded_at: string;
+  session:
+    | {
+        session_date: string;
+        team_id: string | null;
+        team: { team_name: string }[] | { team_name: string } | null;
+      }[]
+    | {
+        session_date: string;
+        team_id: string | null;
+        team: { team_name: string }[] | { team_name: string } | null;
+      }
+    | null;
+};
+
+type TeamRow = {
+  id: string;
+  team_name: string;
+  age_group: string | null;
 };
 
 type ReportRow = {
@@ -69,6 +100,7 @@ type ReferralRow = {
 
 type BusinessData = {
   players: PlayerRow[];
+  teams: TeamRow[];
   sessions: SessionRow[];
   reports: ReportRow[];
   subscriptions: SubscriptionRow[];
@@ -97,7 +129,7 @@ function fallbackInsights(data: BusinessData): BusinessInsight[] {
 
   const missedByPlayer = new Map<string, number>();
   for (const session of data.sessions) {
-    if (session.attendance_status === "missed" && session.player_id) {
+    if (isMissedAttendanceStatus(session.attendance_status) && session.player_id) {
       missedByPlayer.set(
         session.player_id,
         (missedByPlayer.get(session.player_id) ?? 0) + 1,
@@ -276,8 +308,8 @@ export async function POST() {
 
     const [
       playersResult,
-      sessionsResult,
-      sessionPlayersResult,
+      teamsResult,
+      attendanceResult,
       sessionBookingsResult,
       reportsResult,
       subscriptionsResult,
@@ -287,15 +319,31 @@ export async function POST() {
     ] = await Promise.all([
       supabase
         .from("players")
-        .select("id, player_name, parent_name, parent_email")
+        .select(
+          "id, player_name, preferred_foot, primary_position, secondary_positions, team_players(team:teams(team_name, age_group)), parent_name, parent_email",
+        )
         .eq("coach_id", user.id),
       supabase
-        .from("sessions")
-        .select("id, player_id, session_date, attendance_status")
+        .from("teams")
+        .select("id, team_name, age_group")
         .eq("coach_id", user.id),
       supabase
-        .from("session_players")
-        .select("session_id, player_id")
+        .from("session_attendance")
+        .select(
+          `
+            session_id,
+            player_id,
+            status,
+            recorded_at,
+            session:sessions (
+              session_date,
+              team_id,
+              team:teams (
+                team_name
+              )
+            )
+          `,
+        )
         .eq("coach_id", user.id),
       supabase
         .from("session_bookings")
@@ -325,8 +373,8 @@ export async function POST() {
 
     const firstError =
       playersResult.error ??
-      sessionsResult.error ??
-      sessionPlayersResult.error ??
+      teamsResult.error ??
+      attendanceResult.error ??
       sessionBookingsResult.error ??
       reportsResult.error ??
       subscriptionsResult.error ??
@@ -338,51 +386,49 @@ export async function POST() {
       return NextResponse.json({ error: firstError.message }, { status: 500 });
     }
 
-    const sessionPlayerLinks = (sessionPlayersResult.data ?? []) as Array<{
-      session_id: string;
-      player_id: string;
-    }>;
     const sessionBookings = (sessionBookingsResult.data ?? []) as BookingRow[];
-    const playerIdsBySession = new Map<string, Set<string>>();
-
-    for (const session of (sessionsResult.data ?? []) as SessionRow[]) {
-      const assigned = new Set<string>();
-      if (session.player_id) assigned.add(session.player_id);
-      playerIdsBySession.set(session.id, assigned);
-    }
-
-    for (const link of sessionPlayerLinks) {
-      const current = playerIdsBySession.get(link.session_id) ?? new Set<string>();
-      current.add(link.player_id);
-      playerIdsBySession.set(link.session_id, current);
-    }
-
-    for (const booking of sessionBookings) {
-      if (booking.booking_status !== "confirmed") continue;
-      const current = playerIdsBySession.get(booking.session_id) ?? new Set<string>();
-      current.add(booking.player_id);
-      playerIdsBySession.set(booking.session_id, current);
-    }
-
-    const sessionAssignments = ((sessionsResult.data ?? []) as SessionRow[]).flatMap((session) => {
-      const playerIds = [...(playerIdsBySession.get(session.id) ?? new Set<string>())];
-      if (playerIds.length === 0) {
-        return [] as SessionRow[];
+    const safePlayers = ((playersResult.data ?? []) as Array<
+      Omit<PlayerRow, "team_names"> & {
+        team_players?: Array<{
+          team?: { team_name: string; age_group: string | null }[] | {
+            team_name: string;
+            age_group: string | null;
+          } | null;
+        }> | null;
       }
-      return playerIds.map(
-        (playerId) =>
-          ({
-            id: session.id,
-            player_id: playerId,
-            session_date: session.session_date,
-            attendance_status: session.attendance_status,
-          }) satisfies SessionRow,
-      );
-    });
+    >).map((player) => ({
+      ...player,
+      team_names: (player.team_players ?? [])
+        .map((membership) => {
+          const team = Array.isArray(membership.team)
+            ? membership.team[0]
+            : membership.team;
+          if (!team?.team_name) return null;
+          return team.age_group?.trim()
+            ? `${team.team_name} · ${team.age_group.trim()}`
+            : team.team_name;
+        })
+        .filter((value): value is string => Boolean(value)),
+    }));
+    const attendanceSessions = ((attendanceResult.data ?? []) as AttendanceQueryRow[]).map(
+      (row) => {
+        const session = Array.isArray(row.session) ? row.session[0] : row.session;
+        const team = Array.isArray(session?.team) ? session?.team[0] : session?.team;
+        return {
+          id: row.session_id,
+          player_id: row.player_id,
+          team_id: session?.team_id ?? null,
+          team_name: team?.team_name ?? null,
+          session_date: session?.session_date ?? row.recorded_at,
+          attendance_status: row.status,
+        } satisfies SessionRow;
+      },
+    );
 
     const businessData: BusinessData = {
-      players: (playersResult.data ?? []) as PlayerRow[],
-      sessions: sessionAssignments,
+      players: safePlayers,
+      teams: (teamsResult.data ?? []) as TeamRow[],
+      sessions: attendanceSessions,
       reports: (reportsResult.data ?? []) as ReportRow[],
       subscriptions: (subscriptionsResult.data ?? []) as SubscriptionRow[],
       camps: (campsResult.data ?? []) as CampRow[],
@@ -407,7 +453,7 @@ export async function POST() {
           role: "user",
           content: JSON.stringify({
             instruction:
-              "Generate 5-7 AI business insights for this coach. Cover attendance risk, payment failures, camps, revenue growth, follow-up actions, and referrals where relevant.",
+              "Generate 5-7 AI business insights for this coach. Cover attendance risk and attendance patterns by player or squad, payment failures, camps, revenue growth, follow-up actions, and referrals where relevant.",
             data: businessData,
             baselineInsights: deterministic,
           }),

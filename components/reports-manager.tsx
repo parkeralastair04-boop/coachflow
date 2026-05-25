@@ -1,14 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Copy, FileDown, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import {
+  getAttendanceLabel,
+  getAttendanceRate,
+  getAttendanceSummary,
+  type PlayerAttendanceStatus,
+} from "@/lib/attendance";
 import { generateReportPdf, getReportPdfFilename } from "@/lib/report-pdf";
+import {
+  getPlayerProfileSummary,
+  normalizeSecondaryPositions,
+  type PlayerPositionOption,
+  type PreferredFootOption,
+} from "@/lib/player-profile";
+import { getPlayerTeams, getTeamDisplayName, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 
 type PlayerOption = {
   id: string;
   player_name: string;
+  preferred_foot: PreferredFootOption;
+  primary_position: PlayerPositionOption | null;
+  secondary_positions: PlayerPositionOption[];
+  team_players?: { team?: TeamSummary[] | TeamSummary | null }[] | null;
 };
 
 type SavedReport = {
@@ -18,6 +35,39 @@ type SavedReport = {
   raw_notes: string;
   report: string;
   created_at: string;
+};
+
+type AttendanceHistoryRow = {
+  session_id: string;
+  player_id: string;
+  status: PlayerAttendanceStatus;
+  recorded_at: string;
+  session:
+    | {
+        session_date: string;
+        session_type: string | null;
+        group_name: string | null;
+        team: { team_name: string; age_group: string | null }[] | {
+          team_name: string;
+          age_group: string | null;
+        } | null;
+      }[]
+    | {
+        session_date: string;
+        session_type: string | null;
+        group_name: string | null;
+        team: { team_name: string; age_group: string | null }[] | {
+          team_name: string;
+          age_group: string | null;
+        } | null;
+      }
+    | null;
+};
+
+type AttendanceSummaryState = {
+  rate: number;
+  counts: Record<PlayerAttendanceStatus, number>;
+  recent: Array<{ label: string; status: PlayerAttendanceStatus }>;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -50,9 +100,16 @@ export function ReportsManager() {
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [attendanceSummary, setAttendanceSummary] =
+    useState<AttendanceSummaryState | null>(null);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [reportsError, setReportsError] = useState<string | null>(null);
+
+  const selectedPlayer = useMemo(
+    () => players.find((player) => player.id === selectedPlayerId) ?? null,
+    [players, selectedPlayerId],
+  );
 
   async function loadSavedReports(userCoachId: string, playerId: string) {
     if (!playerId) {
@@ -84,6 +141,72 @@ export function ReportsManager() {
     }
   }
 
+  async function loadAttendanceSummary(userCoachId: string, playerId: string) {
+    if (!playerId) {
+      setAttendanceSummary(null);
+      return;
+    }
+
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("session_attendance")
+        .select(
+          `
+            session_id,
+            player_id,
+            status,
+            recorded_at,
+            session:sessions (
+              session_date,
+              session_type,
+              group_name,
+              team:teams (
+                team_name,
+                age_group
+              )
+            )
+          `,
+        )
+        .eq("coach_id", userCoachId)
+        .eq("player_id", playerId)
+        .order("recorded_at", { ascending: false });
+
+      if (error) {
+        setAttendanceSummary(null);
+        return;
+      }
+
+      const rows = (data ?? []) as AttendanceHistoryRow[];
+      const counts = getAttendanceSummary(rows);
+      const recent = rows.slice(0, 5).map((row) => {
+        const session = Array.isArray(row.session) ? row.session[0] : row.session;
+        const team = Array.isArray(session?.team) ? session?.team[0] : session?.team;
+        const label =
+          session?.group_name?.trim() ||
+          team?.team_name?.trim() ||
+          session?.session_type?.trim() ||
+          new Intl.DateTimeFormat("en-GB", {
+            month: "short",
+            day: "numeric",
+          }).format(new Date(row.recorded_at));
+
+        return {
+          label,
+          status: row.status,
+        };
+      });
+
+      setAttendanceSummary({
+        rate: getAttendanceRate(rows),
+        counts,
+        recent,
+      });
+    } catch {
+      setAttendanceSummary(null);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -110,7 +233,9 @@ export function ReportsManager() {
 
         const { data, error: playersError } = await supabase
           .from("players")
-          .select("id, player_name")
+          .select(
+            "id, player_name, preferred_foot, primary_position, secondary_positions, team_players(team:teams(id, team_name, age_group, team_color))",
+          )
           .eq("coach_id", user.id)
           .order("player_name", { ascending: true });
 
@@ -120,12 +245,21 @@ export function ReportsManager() {
           return;
         }
 
-        const safePlayers = (data ?? []) as PlayerOption[];
+        const safePlayers = ((data ?? []) as PlayerOption[]).map((player) => ({
+          ...player,
+          preferred_foot: player.preferred_foot ?? "Unknown",
+          primary_position: player.primary_position ?? null,
+          secondary_positions: normalizeSecondaryPositions(player.secondary_positions),
+          team_players: player.team_players ?? [],
+        }));
         setPlayers(safePlayers);
         if (safePlayers.length > 0) {
           const initialPlayerId = safePlayers[0].id;
           setSelectedPlayerId(initialPlayerId);
-          await loadSavedReports(user.id, initialPlayerId);
+          await Promise.all([
+            loadSavedReports(user.id, initialPlayerId),
+            loadAttendanceSummary(user.id, initialPlayerId),
+          ]);
         }
       } catch (caughtError: unknown) {
         if (!cancelled) setFormError(getErrorMessage(caughtError));
@@ -145,7 +279,10 @@ export function ReportsManager() {
     setSendSuccess(null);
     setSendError(null);
     if (!coachId) return;
-    await loadSavedReports(coachId, playerId);
+    await Promise.all([
+      loadSavedReports(coachId, playerId),
+      loadAttendanceSummary(coachId, playerId),
+    ]);
   }
 
   async function handleGenerateReport(e: React.FormEvent<HTMLFormElement>) {
@@ -156,7 +293,6 @@ export function ReportsManager() {
     setSendError(null);
     setPdfError(null);
 
-    const selectedPlayer = players.find((player) => player.id === selectedPlayerId);
     if (!selectedPlayer) {
       setFormError("Please select a player.");
       return;
@@ -175,6 +311,24 @@ export function ReportsManager() {
         },
         body: JSON.stringify({
           playerName: selectedPlayer.player_name,
+          playerProfile: {
+            preferredFoot: selectedPlayer.preferred_foot,
+            primaryPosition: selectedPlayer.primary_position,
+            secondaryPositions: selectedPlayer.secondary_positions,
+            teamNames: getPlayerTeams(selectedPlayer.team_players).map((team) =>
+              getTeamDisplayName(team),
+            ),
+            attendanceSummary: attendanceSummary
+              ? {
+                  attendanceRate: Math.round(attendanceSummary.rate),
+                  counts: attendanceSummary.counts,
+                  recent: attendanceSummary.recent.map((entry) => ({
+                    label: entry.label,
+                    status: getAttendanceLabel(entry.status),
+                  })),
+                }
+              : null,
+          },
           notes: notes.trim(),
         }),
       });
@@ -289,7 +443,6 @@ export function ReportsManager() {
   }
 
   async function handleDownloadPdf() {
-    const selectedPlayer = players.find((player) => player.id === selectedPlayerId);
     if (!selectedPlayer || !report.trim()) {
       setPdfError("Generate a report first, then download it as a PDF.");
       return;
@@ -301,6 +454,12 @@ export function ReportsManager() {
       const date = new Date();
       const pdfBytes = await generateReportPdf({
         playerName: selectedPlayer.player_name,
+        preferredFoot: selectedPlayer.preferred_foot,
+        primaryPosition: selectedPlayer.primary_position,
+        secondaryPositions: selectedPlayer.secondary_positions,
+        teamNames: getPlayerTeams(selectedPlayer.team_players).map((team) =>
+          getTeamDisplayName(team),
+        ),
         report: report.trim(),
         date,
       });
@@ -395,6 +554,40 @@ export function ReportsManager() {
               ))}
             </select>
           </div>
+
+          {selectedPlayer ? (
+            <div className="rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
+              <p className="font-medium">{selectedPlayer.player_name}</p>
+              <p className="text-muted mt-1">
+                {getPlayerProfileSummary({
+                  preferred_foot: selectedPlayer.preferred_foot,
+                  primary_position: selectedPlayer.primary_position,
+                  secondary_positions: selectedPlayer.secondary_positions,
+                })}
+              </p>
+              {getPlayerTeams(selectedPlayer.team_players).length > 0 ? (
+                <p className="text-muted mt-1">
+                  Teams:{" "}
+                  {getPlayerTeams(selectedPlayer.team_players)
+                    .map((team) => getTeamDisplayName(team))
+                    .join(", ")}
+                </p>
+              ) : null}
+              {attendanceSummary ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
+                    Attendance {Math.round(attendanceSummary.rate)}%
+                  </span>
+                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
+                    {attendanceSummary.counts.present + attendanceSummary.counts.late} positive
+                  </span>
+                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
+                    {attendanceSummary.counts.absent} absent
+                  </span>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="notes">

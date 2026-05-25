@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
+import {
+  getPositionSummary,
+  normalizeSecondaryPositions,
+  type PlayerPositionOption,
+  type PreferredFootOption,
+} from "@/lib/player-profile";
+import { getPlayerTeams, getTeamDisplayName, type TeamSummary } from "@/lib/team-management";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasFeatureAccess } from "@/lib/subscription";
 import { getAcademyForUser } from "@/lib/academy";
@@ -11,6 +18,10 @@ type SendReportBody = {
 
 type PlayerEmailRow = {
   player_name: string;
+  preferred_foot: PreferredFootOption;
+  primary_position: PlayerPositionOption | null;
+  secondary_positions: PlayerPositionOption[];
+  team_players?: { team?: TeamSummary[] | TeamSummary | null }[] | null;
   parent_name: string | null;
   parent_email: string | null;
 };
@@ -80,7 +91,9 @@ export async function POST(request: Request) {
 
     const { data: player, error: playerError } = await supabase
       .from("players")
-      .select("player_name, parent_name, parent_email")
+      .select(
+        "player_name, preferred_foot, primary_position, secondary_positions, team_players(team:teams(id, team_name, age_group, team_color)), parent_name, parent_email",
+      )
       .eq("id", playerId)
       .eq("coach_id", user.id)
       .single();
@@ -89,7 +102,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: playerError.message }, { status: 404 });
     }
 
-    const safePlayer = player as PlayerEmailRow | null;
+    const safePlayer = player
+      ? ({
+          ...(player as PlayerEmailRow),
+          preferred_foot: (player as PlayerEmailRow).preferred_foot ?? "Unknown",
+          primary_position: (player as PlayerEmailRow).primary_position ?? null,
+          secondary_positions: normalizeSecondaryPositions(
+            (player as PlayerEmailRow).secondary_positions,
+          ),
+          team_players: (player as PlayerEmailRow).team_players ?? [],
+        } as PlayerEmailRow)
+      : null;
     if (!safePlayer) {
       return NextResponse.json(
         { error: "Selected player was not found." },
@@ -106,6 +129,13 @@ export async function POST(request: Request) {
     const parentName = safePlayer.parent_name?.trim();
     const greeting = parentName ? `Hi ${escapeHtml(parentName)},` : "Hi,";
     const escapedPlayerName = escapeHtml(safePlayer.player_name);
+    const profileSummary = `${getPositionSummary({
+      primary_position: safePlayer.primary_position,
+      secondary_positions: safePlayer.secondary_positions,
+    })} · ${safePlayer.preferred_foot} foot`;
+    const teamSummary = getPlayerTeams(safePlayer.team_players)
+      .map((team) => getTeamDisplayName(team))
+      .join(", ");
     const subject = `Progress Report for ${safePlayer.player_name}`;
     const academy = await getAcademyForUser(user.id);
     const academyName = academy?.name ?? "CoachFlow";
@@ -130,6 +160,14 @@ export async function POST(request: Request) {
                 <p style="margin:0 0 16px;color:#374151;line-height:1.65;">
                   Here is your latest ${escapeHtml(academyName)} progress report for ${escapedPlayerName}, prepared to keep you updated on recent coaching focus, strengths, and next steps.
                 </p>
+                <p style="margin:0 0 16px;color:#6b7280;line-height:1.65;">
+                  Player profile: ${escapeHtml(profileSummary)}
+                </p>
+                ${
+                  teamSummary
+                    ? `<p style="margin:0 0 16px;color:#6b7280;line-height:1.65;">Teams: ${escapeHtml(teamSummary)}</p>`
+                    : ""
+                }
                 <div style="margin:24px 0;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
                   ${reportToHtml(report)}
                 </div>
@@ -149,6 +187,9 @@ export async function POST(request: Request) {
     const text = `${parentName ? `Hi ${parentName},` : "Hi,"}
 
 Here is your latest ${academyName} progress report for ${safePlayer.player_name}.
+
+Player profile: ${profileSummary}
+${teamSummary ? `\nTeams: ${teamSummary}` : ""}
 
 ${reportToText(report)}
 

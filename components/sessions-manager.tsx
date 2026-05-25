@@ -24,6 +24,7 @@ import {
   type SessionBookingRow,
 } from "@/lib/booking-system";
 import { summarizeSessionBookings } from "@/lib/session-booking-state";
+import { getTeamDisplayName, unwrapSingleRelation, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
@@ -31,6 +32,10 @@ type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 type PlayerOption = {
   id: string;
   player_name: string;
+};
+
+type TeamOption = TeamSummary & {
+  team_players?: { player_id: string }[] | null;
 };
 
 type SessionPlayerLink = {
@@ -43,6 +48,7 @@ type SessionRow = {
   coach_id: string;
   academy_id: string | null;
   player_id: string | null;
+  team_id: string | null;
   group_name: string | null;
   session_date: string;
   session_type: string | null;
@@ -57,6 +63,7 @@ type SessionRow = {
   is_public: boolean;
   booking_enabled: boolean;
   source_availability_id: string | null;
+  team: TeamSummary[] | TeamSummary | null;
 };
 
 type SessionBookingSummary = Pick<
@@ -66,6 +73,7 @@ type SessionBookingSummary = Pick<
 
 type SessionFormState = {
   availabilityTemplateId: string;
+  teamId: string;
   selectedPlayerIds: string[];
   groupName: string;
   sessionDateTime: string;
@@ -84,6 +92,7 @@ const SESSION_SELECT = `
   coach_id,
   academy_id,
   player_id,
+  team_id,
   group_name,
   session_date,
   session_type,
@@ -97,6 +106,12 @@ const SESSION_SELECT = `
   is_public,
   booking_enabled,
   source_availability_id,
+  team:teams (
+    id,
+    team_name,
+    age_group,
+    team_color
+  ),
   session_players (
     player_id,
     player:players (
@@ -108,6 +123,7 @@ const SESSION_SELECT = `
 
 const defaultFormState: SessionFormState = {
   availabilityTemplateId: "",
+  teamId: "",
   selectedPlayerIds: [],
   groupName: "",
   sessionDateTime: "",
@@ -190,6 +206,8 @@ function getSessionTitle(
   playerNameById: Map<string, string>,
 ): string {
   if (session.group_name?.trim()) return session.group_name;
+  const team = unwrapSingleRelation(session.team);
+  if (team?.team_name?.trim()) return team.team_name;
   if (session.session_type?.trim()) return session.session_type;
 
   const names = getAssignedPlayerNames(session, playerNameById);
@@ -206,6 +224,7 @@ export function SessionsManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
   const [academyId, setAcademyId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
   const [availabilityTemplates, setAvailabilityTemplates] = useState<CoachAvailabilityRow[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingSummary[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
@@ -228,6 +247,11 @@ export function SessionsManager() {
     [availabilityTemplates],
   );
 
+  const teamById = useMemo(
+    () => new Map(teams.map((team) => [team.id, team])),
+    [teams],
+  );
+
   const loadCoachData = useCallback(async (userId: string) => {
     setLoading(true);
     setError(null);
@@ -236,6 +260,7 @@ export function SessionsManager() {
 
       const [
         { data: playersData, error: playersError },
+        { data: teamsData, error: teamsError },
         { data: sessionsData, error: sessionsError },
         { data: availabilityData, error: availabilityError },
         { data: bookingsData, error: bookingsError },
@@ -245,6 +270,11 @@ export function SessionsManager() {
           .select("id, player_name")
           .eq("coach_id", userId)
           .order("player_name", { ascending: true }),
+        supabase
+          .from("teams")
+          .select("id, team_name, age_group, team_color, team_players(player_id)")
+          .eq("coach_id", userId)
+          .order("team_name", { ascending: true }),
         supabase
           .from("sessions")
           .select(SESSION_SELECT)
@@ -264,9 +294,10 @@ export function SessionsManager() {
           .eq("coach_id", userId),
       ]);
 
-      if (playersError || sessionsError || availabilityError || bookingsError) {
+      if (playersError || teamsError || sessionsError || availabilityError || bookingsError) {
         setError(
           playersError?.message ??
+            teamsError?.message ??
             sessionsError?.message ??
             availabilityError?.message ??
             bookingsError?.message ??
@@ -276,6 +307,7 @@ export function SessionsManager() {
       }
 
       setPlayers((playersData ?? []) as PlayerOption[]);
+      setTeams((teamsData ?? []) as TeamOption[]);
       setSessions(((sessionsData ?? []) as SessionRow[]).sort(sortSessions));
       setAvailabilityTemplates((availabilityData ?? []) as CoachAvailabilityRow[]);
       setSessionBookings((bookingsData ?? []) as SessionBookingSummary[]);
@@ -381,11 +413,23 @@ export function SessionsManager() {
     setSubmitError(null);
   }
 
+  function handleTeamChange(teamId: string) {
+    const team = teamById.get(teamId);
+    const teamPlayerIds = (team?.team_players ?? []).map((membership) => membership.player_id);
+    setForm((current) => ({
+      ...current,
+      teamId,
+      groupName: current.groupName.trim() || team?.team_name || "",
+      selectedPlayerIds: team ? teamPlayerIds : current.selectedPlayerIds,
+    }));
+  }
+
   function startEditing(session: SessionRow) {
     setEditingSessionId(session.id);
     setSubmitError(null);
     setForm({
       availabilityTemplateId: session.source_availability_id ?? "",
+      teamId: session.team_id ?? "",
       selectedPlayerIds: getAssignedPlayerIds(session),
       groupName: session.group_name ?? "",
       sessionDateTime: toDateTimeLocalValue(session.session_date),
@@ -461,6 +505,7 @@ export function SessionsManager() {
       coach_id: coachId,
       academy_id: academyId,
       player_id: form.selectedPlayerIds[0] ?? null,
+      team_id: form.teamId || null,
       group_name: form.groupName.trim() || null,
       session_date: new Date(form.sessionDateTime).toISOString(),
       session_type: form.sessionType.trim(),
@@ -659,6 +704,29 @@ export function SessionsManager() {
             <p className="text-muted mt-2 text-xs">
               Templates are optional, but they speed up public session creation and keep
               pricing consistent.
+            </p>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="mb-2 block text-sm font-medium" htmlFor="sessionTeam">
+              Team / squad
+            </label>
+            <select
+              id="sessionTeam"
+              value={form.teamId}
+              onChange={(event) => handleTeamChange(event.target.value)}
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            >
+              <option value="">No linked team</option>
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>
+                  {getTeamDisplayName(team)}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted mt-2 text-xs">
+              Linking a team preloads its roster while still letting you adjust players
+              for an individual session.
             </p>
           </div>
 
@@ -918,6 +986,7 @@ export function SessionsManager() {
                 session.capacity,
               );
               const remainingSpaces = bookingStats.remainingSpaces;
+              const team = unwrapSingleRelation(session.team);
 
               return (
                 <article key={session.id} className="glass-panel rounded-2xl p-5 sm:p-6">
@@ -961,6 +1030,18 @@ export function SessionsManager() {
                       <Users className="size-3.5" aria-hidden />
                       {assignedCount} internal player{assignedCount === 1 ? "" : "s"}
                     </span>
+                    {team ? (
+                      <span className="border-border text-muted inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-medium">
+                        <span
+                          className="inline-flex size-2.5 rounded-full"
+                          style={{
+                            backgroundColor:
+                              team.team_color ?? "var(--color-accent)",
+                          }}
+                        />
+                        {getTeamDisplayName(team)}
+                      </span>
+                    ) : null}
                     <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
                       {session.session_type ?? "Session"}
                     </span>
