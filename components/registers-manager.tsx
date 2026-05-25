@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarCheck,
   Loader2,
@@ -18,6 +18,24 @@ type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
 type SessionPlayerLink = {
   player_id: string;
+  player: {
+    id: string;
+    player_name: string;
+  }[] | {
+    id: string;
+    player_name: string;
+  } | null;
+};
+
+type PlayerRow = {
+  id: string;
+  player_name: string;
+};
+
+type SessionBookingLink = {
+  session_id: string;
+  player_id: string;
+  booking_status: "pending" | "confirmed" | "waitlist" | "cancelled";
   player: {
     id: string;
     player_name: string;
@@ -103,23 +121,54 @@ function formatSessionDate(value: string): string {
   }).format(parsed);
 }
 
-function getAssignedPlayerNames(session: RegisterSession): string[] {
+function getAssignedPlayerNames(
+  session: RegisterSession,
+  playerNameById: Map<string, string>,
+  sessionBookings: SessionBookingLink[],
+): string[] {
+  const namesByPlayerId = new Map<string, string>();
+
+  for (const booking of sessionBookings) {
+    if (booking.session_id !== session.id || booking.booking_status !== "confirmed") continue;
+    const player = Array.isArray(booking.player) ? booking.player[0] : booking.player;
+    namesByPlayerId.set(
+      booking.player_id,
+      player?.player_name ?? playerNameById.get(booking.player_id) ?? "Unknown player",
+    );
+  }
+
   const linkedNames = (session.session_players ?? [])
     .map((link) => {
       const player = Array.isArray(link.player) ? link.player[0] : link.player;
-      return player?.player_name ?? null;
+      const name =
+        player?.player_name ?? playerNameById.get(link.player_id) ?? null;
+      if (name) {
+        namesByPlayerId.set(link.player_id, name);
+      }
+      return name;
     })
     .filter((name): name is string => Boolean(name));
 
-  if (linkedNames.length > 0) return linkedNames;
-  return session.player_id ? ["Unknown player"] : [];
+  if (linkedNames.length > 0 || namesByPlayerId.size > 0) {
+    return [...namesByPlayerId.values()];
+  }
+
+  if (session.player_id) {
+    return [playerNameById.get(session.player_id) ?? "Unknown player"];
+  }
+
+  return [];
 }
 
-function getRegisterTitle(session: RegisterSession): string {
+function getRegisterTitle(
+  session: RegisterSession,
+  playerNameById: Map<string, string>,
+  sessionBookings: SessionBookingLink[],
+): string {
   if (session.group_name?.trim()) return session.group_name;
   if (session.session_type?.trim()) return session.session_type;
 
-  const names = getAssignedPlayerNames(session);
+  const names = getAssignedPlayerNames(session, playerNameById, sessionBookings);
   if (names.length === 0) return "Untitled session";
   if (names.length <= 2) return names.join(" & ");
   return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
@@ -266,6 +315,8 @@ function StatusIndicator({
 
 export function RegistersManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
+  const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [sessionBookings, setSessionBookings] = useState<SessionBookingLink[]>([]);
   const [sessions, setSessions] = useState<RegisterSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -281,6 +332,11 @@ export function RegistersManager() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const syncingRef = useRef(false);
 
+  const playerNameById = useMemo(
+    () => new Map(players.map((player) => [player.id, player.player_name])),
+    [players],
+  );
+
   const refreshPendingCount = useCallback(async () => {
     const queued = await getQueuedChanges();
     setPendingCount(queued.length);
@@ -293,18 +349,50 @@ export function RegistersManager() {
     setError(null);
     try {
       const supabase = createClient();
-      const { data: sessionsData, error: sessionsError } = await supabase
-        .from("sessions")
-        .select(SESSION_SELECT)
-        .eq("coach_id", userId)
-        .order("session_date", { ascending: false });
+      const [
+        { data: sessionsData, error: sessionsError },
+        { data: playersData, error: playersError },
+        { data: bookingsData, error: bookingsError },
+      ] = await Promise.all([
+        supabase
+          .from("sessions")
+          .select(SESSION_SELECT)
+          .eq("coach_id", userId)
+          .order("session_date", { ascending: false }),
+        supabase
+          .from("players")
+          .select("id, player_name")
+          .eq("coach_id", userId),
+        supabase
+          .from("session_bookings")
+          .select(
+            `
+              session_id,
+              player_id,
+              booking_status,
+              player:players (
+                id,
+                player_name
+              )
+            `,
+          )
+          .eq("coach_id", userId)
+          .eq("booking_status", "confirmed"),
+      ]);
 
-      if (sessionsError) {
-        setError(sessionsError.message);
+      if (sessionsError || playersError || bookingsError) {
+        setError(
+          sessionsError?.message ??
+            playersError?.message ??
+            bookingsError?.message ??
+            "Could not load registers.",
+        );
         return;
       }
 
       const safeSessions = (sessionsData ?? []) as RegisterSession[];
+      setPlayers((playersData ?? []) as PlayerRow[]);
+      setSessionBookings((bookingsData ?? []) as SessionBookingLink[]);
       const queued = await refreshPendingCount();
       const queuedBySession = new Map(
         queued
@@ -610,7 +698,14 @@ export function RegistersManager() {
 
         {!loading && !error && sessions.length > 0 ? (
           <div className="grid gap-4 lg:grid-cols-2">
-            {sessions.map((session) => (
+            {sessions.map((session) => {
+              const assignedNames = getAssignedPlayerNames(
+                session,
+                playerNameById,
+                sessionBookings,
+              );
+
+              return (
               <article
                 key={session.id}
                 className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6"
@@ -618,7 +713,7 @@ export function RegistersManager() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-lg font-semibold tracking-tight">
-                      {getRegisterTitle(session)}
+                      {getRegisterTitle(session, playerNameById, sessionBookings)}
                     </h3>
                     <p className="text-muted mt-1 text-sm">
                       {formatSessionDate(session.session_date)}
@@ -634,8 +729,8 @@ export function RegistersManager() {
                 <div className="mt-4 space-y-2 text-sm">
                   <p className="inline-flex items-center gap-1.5">
                     <Users className="text-muted size-3.5" aria-hidden />
-                    {getAssignedPlayerNames(session).length} assigned player
-                    {getAssignedPlayerNames(session).length === 1 ? "" : "s"}
+                    {assignedNames.length} rostered player
+                    {assignedNames.length === 1 ? "" : "s"}
                   </p>
                   <p>
                     <span className="text-muted">Type:</span>{" "}
@@ -647,9 +742,9 @@ export function RegistersManager() {
                   </p>
                 </div>
 
-                {getAssignedPlayerNames(session).length > 0 ? (
+                {assignedNames.length > 0 ? (
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {getAssignedPlayerNames(session).map((name) => (
+                    {assignedNames.map((name) => (
                       <span
                         key={`${session.id}-${name}`}
                         className="rounded-full bg-black/[0.02] px-3 py-1 text-sm dark:bg-white/[0.03]"
@@ -690,7 +785,8 @@ export function RegistersManager() {
                   </div>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </section>

@@ -5,6 +5,7 @@ import {
   BellRing,
   Brain,
   Building2,
+  CalendarRange,
   CalendarCheck,
   CalendarDays,
   ClipboardList,
@@ -52,6 +53,12 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     icon: Users,
     items: [
       { href: "/dashboard/players", label: "Players", icon: UserSquare2, feature: "players" },
+      {
+        href: "/dashboard/availability",
+        label: "Availability",
+        icon: CalendarRange,
+        feature: "sessions",
+      },
       { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays, feature: "sessions" },
       {
         href: "/dashboard/registers",

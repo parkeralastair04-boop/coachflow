@@ -3,15 +3,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CalendarClock,
+  Eye,
+  EyeOff,
   Loader2,
   MapPin,
   Pencil,
+  PoundSterling,
   Trash2,
   Users,
   X,
 } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
 import { PlayerMultiSelect } from "@/components/player-multi-select";
+import {
+  getDayLabel,
+  formatMinutes,
+  formatPoundsFromPence,
+  parsePoundsToPence,
+  type CoachAvailabilityRow,
+  type SessionBookingRow,
+} from "@/lib/booking-system";
+import { summarizeSessionBookings } from "@/lib/session-booking-state";
 import { createClient } from "@/lib/supabase";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
@@ -38,15 +50,30 @@ type SessionRow = {
   attendance_status: AttendanceStatus;
   created_at: string;
   session_players: SessionPlayerLink[] | null;
+  duration_minutes: number;
+  price: number;
+  capacity: number;
+  is_public: boolean;
+  source_availability_id: string | null;
 };
 
+type SessionBookingSummary = Pick<
+  SessionBookingRow,
+  "id" | "session_id" | "booking_status" | "payment_status" | "amount" | "expires_at"
+>;
+
 type SessionFormState = {
+  availabilityTemplateId: string;
   selectedPlayerIds: string[];
   groupName: string;
   sessionDateTime: string;
   sessionType: string;
   location: string;
   notes: string;
+  durationMinutes: string;
+  price: string;
+  capacity: string;
+  visibility: "public" | "private";
 };
 
 const SESSION_SELECT = `
@@ -60,6 +87,11 @@ const SESSION_SELECT = `
   notes,
   attendance_status,
   created_at,
+  duration_minutes,
+  price,
+  capacity,
+  is_public,
+  source_availability_id,
   session_players (
     player_id,
     player:players (
@@ -70,12 +102,17 @@ const SESSION_SELECT = `
 `;
 
 const defaultFormState: SessionFormState = {
+  availabilityTemplateId: "",
   selectedPlayerIds: [],
   groupName: "",
   sessionDateTime: "",
-  sessionType: "",
+  sessionType: "1-to-1",
   location: "",
   notes: "",
+  durationMinutes: "60",
+  price: "0.00",
+  capacity: "1",
+  visibility: "private",
 };
 
 const attendanceOptions: AttendanceStatus[] = [
@@ -155,9 +192,15 @@ function getSessionTitle(
   return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
 }
 
+function sortSessions(a: SessionRow, b: SessionRow) {
+  return new Date(b.session_date).getTime() - new Date(a.session_date).getTime();
+}
+
 export function SessionsManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
+  const [availabilityTemplates, setAvailabilityTemplates] = useState<CoachAvailabilityRow[]>([]);
+  const [sessionBookings, setSessionBookings] = useState<SessionBookingSummary[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [form, setForm] = useState<SessionFormState>(defaultFormState);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -173,6 +216,11 @@ export function SessionsManager() {
     [players],
   );
 
+  const templateById = useMemo(
+    () => new Map(availabilityTemplates.map((template) => [template.id, template])),
+    [availabilityTemplates],
+  );
+
   const loadCoachData = useCallback(async (userId: string) => {
     setLoading(true);
     setError(null);
@@ -182,6 +230,8 @@ export function SessionsManager() {
       const [
         { data: playersData, error: playersError },
         { data: sessionsData, error: sessionsError },
+        { data: availabilityData, error: availabilityError },
+        { data: bookingsData, error: bookingsError },
       ] = await Promise.all([
         supabase
           .from("players")
@@ -193,19 +243,35 @@ export function SessionsManager() {
           .select(SESSION_SELECT)
           .eq("coach_id", userId)
           .order("session_date", { ascending: false }),
+        supabase
+          .from("coach_availability")
+          .select(
+            "id, coach_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
+          )
+          .eq("coach_id", userId)
+          .order("day_of_week", { ascending: true })
+          .order("start_time", { ascending: true }),
+        supabase
+          .from("session_bookings")
+          .select("id, session_id, booking_status, payment_status, amount, expires_at")
+          .eq("coach_id", userId),
       ]);
 
-      if (playersError) {
-        setError(playersError.message);
-        return;
-      }
-      if (sessionsError) {
-        setError(sessionsError.message);
+      if (playersError || sessionsError || availabilityError || bookingsError) {
+        setError(
+          playersError?.message ??
+            sessionsError?.message ??
+            availabilityError?.message ??
+            bookingsError?.message ??
+            "Could not load sessions.",
+        );
         return;
       }
 
       setPlayers((playersData ?? []) as PlayerOption[]);
-      setSessions((sessionsData ?? []) as SessionRow[]);
+      setSessions(((sessionsData ?? []) as SessionRow[]).sort(sortSessions));
+      setAvailabilityTemplates((availabilityData ?? []) as CoachAvailabilityRow[]);
+      setSessionBookings((bookingsData ?? []) as SessionBookingSummary[]);
     } catch (caughtError: unknown) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -271,6 +337,25 @@ export function SessionsManager() {
     };
   }, [loadCoachData]);
 
+  function applyTemplate(templateId: string) {
+    const template = templateById.get(templateId);
+    setForm((current) => {
+      if (!template) {
+        return { ...current, availabilityTemplateId: "" };
+      }
+
+      return {
+        ...current,
+        availabilityTemplateId: template.id,
+        sessionType: template.session_type,
+        durationMinutes: String(template.duration_minutes),
+        price: (template.default_price / 100).toFixed(2),
+        capacity: String(template.default_capacity),
+        visibility: template.is_public ? "public" : "private",
+      };
+    });
+  }
+
   function resetForm() {
     setEditingSessionId(null);
     setForm(defaultFormState);
@@ -281,12 +366,17 @@ export function SessionsManager() {
     setEditingSessionId(session.id);
     setSubmitError(null);
     setForm({
+      availabilityTemplateId: session.source_availability_id ?? "",
       selectedPlayerIds: getAssignedPlayerIds(session),
       groupName: session.group_name ?? "",
       sessionDateTime: toDateTimeLocalValue(session.session_date),
-      sessionType: session.session_type ?? "",
+      sessionType: session.session_type ?? "1-to-1",
       location: session.location ?? "",
       notes: session.notes ?? "",
+      durationMinutes: String(session.duration_minutes),
+      price: (session.price / 100).toFixed(2),
+      capacity: String(session.capacity),
+      visibility: session.is_public ? "public" : "private",
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -303,6 +393,8 @@ export function SessionsManager() {
       throw deleteError;
     }
 
+    if (playerIds.length === 0) return;
+
     const { error: insertError } = await supabase.from("session_players").insert(
       playerIds.map((playerId) => ({
         session_id: sessionId,
@@ -315,19 +407,30 @@ export function SessionsManager() {
     }
   }
 
-  async function handleSubmitSession(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  async function handleSubmitSession(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
     if (!coachId) {
       setSubmitError("You must be signed in to schedule sessions.");
       return;
     }
-    if (form.selectedPlayerIds.length === 0) {
-      setSubmitError("Please select at least one player.");
-      return;
-    }
     if (!form.sessionDateTime) {
       setSubmitError("Please provide session date and time.");
+      return;
+    }
+    if (!form.sessionType.trim()) {
+      setSubmitError("Please choose a session type.");
+      return;
+    }
+
+    const durationMinutes = Number.parseInt(form.durationMinutes, 10);
+    const capacity = Number.parseInt(form.capacity, 10);
+    if (!Number.isFinite(durationMinutes) || durationMinutes < 15) {
+      setSubmitError("Duration must be at least 15 minutes.");
+      return;
+    }
+    if (!Number.isFinite(capacity) || capacity < 1) {
+      setSubmitError("Capacity must be at least 1.");
       return;
     }
 
@@ -336,13 +439,18 @@ export function SessionsManager() {
 
     const payload = {
       coach_id: coachId,
-      player_id: form.selectedPlayerIds[0],
+      player_id: form.selectedPlayerIds[0] ?? null,
       group_name: form.groupName.trim() || null,
       session_date: new Date(form.sessionDateTime).toISOString(),
-      session_type: form.sessionType.trim() || null,
+      session_type: form.sessionType.trim(),
       location: form.location.trim() || null,
       notes: form.notes.trim() || null,
       attendance_status: "scheduled" as AttendanceStatus,
+      duration_minutes: durationMinutes,
+      price: parsePoundsToPence(form.price),
+      capacity,
+      is_public: form.visibility === "public",
+      source_availability_id: form.availabilityTemplateId || null,
     };
 
     try {
@@ -351,14 +459,7 @@ export function SessionsManager() {
       if (editingSessionId) {
         const { error: updateError } = await supabase
           .from("sessions")
-          .update({
-            player_id: payload.player_id,
-            group_name: payload.group_name,
-            session_date: payload.session_date,
-            session_type: payload.session_type,
-            location: payload.location,
-            notes: payload.notes,
-          })
+          .update(payload)
           .eq("id", editingSessionId)
           .eq("coach_id", coachId);
 
@@ -371,9 +472,9 @@ export function SessionsManager() {
         const refreshed = await loadSessionById(coachId, editingSessionId);
         if (refreshed) {
           setSessions((current) =>
-            current.map((session) =>
-              session.id === editingSessionId ? refreshed : session,
-            ),
+            current
+              .map((session) => (session.id === editingSessionId ? refreshed : session))
+              .sort(sortSessions),
           );
         }
         resetForm();
@@ -400,12 +501,12 @@ export function SessionsManager() {
 
       const refreshed = await loadSessionById(coachId, created.id as string);
       if (refreshed) {
-        setSessions((current) => [refreshed, ...current]);
+        setSessions((current) => [refreshed, ...current].sort(sortSessions));
       }
       setForm((current) => ({
-        ...current,
+        ...defaultFormState,
         sessionDateTime: "",
-        notes: "",
+        location: current.location,
       }));
     } catch (caughtError: unknown) {
       setSubmitError(getErrorMessage(caughtError));
@@ -417,10 +518,7 @@ export function SessionsManager() {
     }
   }
 
-  async function updateAttendanceStatus(
-    sessionId: string,
-    nextStatus: AttendanceStatus,
-  ) {
+  async function updateAttendanceStatus(sessionId: string, nextStatus: AttendanceStatus) {
     if (!coachId) {
       setSubmitError("You must be signed in to update attendance.");
       return;
@@ -443,9 +541,7 @@ export function SessionsManager() {
 
       setSessions((current) =>
         current.map((session) =>
-          session.id === sessionId
-            ? { ...session, attendance_status: nextStatus }
-            : session,
+          session.id === sessionId ? { ...session, attendance_status: nextStatus } : session,
         ),
       );
     } catch (caughtError: unknown) {
@@ -477,6 +573,7 @@ export function SessionsManager() {
       }
 
       setSessions((current) => current.filter((session) => session.id !== sessionId));
+      setSessionBookings((current) => current.filter((booking) => booking.session_id !== sessionId));
       if (editingSessionId === sessionId) {
         resetForm();
       }
@@ -492,18 +589,18 @@ export function SessionsManager() {
       <FeaturePageHeader
         featureKey="sessions"
         title="Session Scheduling"
-        subtitle="Plan sessions for individuals or groups, assign multiple players, and keep attendance tied to the right session."
+        subtitle="Create sessions from availability templates, override price or capacity, and publish bookable slots without losing manual internal control."
       />
 
       <section className="glass-panel rounded-2xl p-6 sm:p-8">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
-              {editingSessionId ? "Edit session" : "Schedule session"}
+              {editingSessionId ? "Edit session" : "Create session"}
             </h2>
             <p className="text-muted mt-1 text-sm">
-              Add optional group naming like “U12 Development — Skills” and assign
-              every player who should appear in the register.
+              Start from an availability template to auto-fill duration, pricing,
+              capacity, and visibility, then override anything before saving.
             </p>
           </div>
           {editingSessionId ? (
@@ -520,49 +617,70 @@ export function SessionsManager() {
 
         <form className="mt-6 grid gap-4 sm:grid-cols-2" onSubmit={handleSubmitSession}>
           <div className="sm:col-span-2">
+            <label className="mb-2 block text-sm font-medium" htmlFor="availabilityTemplate">
+              Availability template
+            </label>
+            <select
+              id="availabilityTemplate"
+              value={form.availabilityTemplateId}
+              onChange={(event) => applyTemplate(event.target.value)}
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            >
+              <option value="">Create without a template</option>
+              {availabilityTemplates.map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.session_type} · {getDayLabel(template.day_of_week)} ·{" "}
+                  {template.start_time.slice(0, 5)} - {template.end_time.slice(0, 5)}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted mt-2 text-xs">
+              Templates are optional, but they speed up public session creation and keep
+              pricing consistent.
+            </p>
+          </div>
+
+          <div className="sm:col-span-2">
             <PlayerMultiSelect
               players={players}
               selectedIds={form.selectedPlayerIds}
               onChange={(nextSelectedIds) =>
                 setForm((current) => ({ ...current, selectedPlayerIds: nextSelectedIds }))
               }
-              disabled={saving || players.length === 0}
+              disabled={saving}
             />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium" htmlFor="groupName">
-              Group Name
-            </label>
-            <input
-              id="groupName"
-              value={form.groupName}
-              onChange={(e) =>
-                setForm((current) => ({ ...current, groupName: e.target.value }))
-              }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
-              placeholder="e.g. Elite Finishing Group"
-            />
-            <p className="text-muted mt-2 text-xs">
-              Optional. Leave blank if you want CoachFlow to use the session type or
-              player list as the title.
+            <p className="text-muted mt-3 text-xs">
+              Manual player assignments remain optional so public sessions can start empty
+              and fill from bookings later.
             </p>
           </div>
 
           <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="groupName">
+              Group name
+            </label>
+            <input
+              id="groupName"
+              value={form.groupName}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, groupName: event.target.value }))
+              }
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              placeholder="e.g. Elite Finishing Group"
+            />
+          </div>
+
+          <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="sessionDateTime">
-              Session Date and Time
+              Session date and time
             </label>
             <input
               id="sessionDateTime"
               type="datetime-local"
               required
               value={form.sessionDateTime}
-              onChange={(e) =>
-                setForm((current) => ({
-                  ...current,
-                  sessionDateTime: e.target.value,
-                }))
+              onChange={(event) =>
+                setForm((current) => ({ ...current, sessionDateTime: event.target.value }))
               }
               className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
             />
@@ -570,16 +688,17 @@ export function SessionsManager() {
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="sessionType">
-              Session Focus
+              Session type
             </label>
             <input
               id="sessionType"
+              required
               value={form.sessionType}
-              onChange={(e) =>
-                setForm((current) => ({ ...current, sessionType: e.target.value }))
+              onChange={(event) =>
+                setForm((current) => ({ ...current, sessionType: event.target.value }))
               }
               className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
-              placeholder="e.g. Finishing, Technical, Goalkeeping"
+              placeholder="1-to-1, Group Session, Camp"
             />
           </div>
 
@@ -590,12 +709,83 @@ export function SessionsManager() {
             <input
               id="location"
               value={form.location}
-              onChange={(e) =>
-                setForm((current) => ({ ...current, location: e.target.value }))
+              onChange={(event) =>
+                setForm((current) => ({ ...current, location: event.target.value }))
               }
               className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
               placeholder="e.g. Pitch A"
             />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="durationMinutes">
+              Duration (mins)
+            </label>
+            <input
+              id="durationMinutes"
+              type="number"
+              min={15}
+              step={15}
+              value={form.durationMinutes}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, durationMinutes: event.target.value }))
+              }
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="sessionPrice">
+              Price
+            </label>
+            <div className="border-border bg-background flex h-11 items-center rounded-xl border px-3">
+              <PoundSterling className="text-muted size-4 shrink-0" aria-hidden />
+              <input
+                id="sessionPrice"
+                value={form.price}
+                onChange={(event) =>
+                  setForm((current) => ({ ...current, price: event.target.value }))
+                }
+                className="h-full w-full bg-transparent text-sm outline-none"
+                placeholder="45.00"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="sessionCapacity">
+              Capacity
+            </label>
+            <input
+              id="sessionCapacity"
+              type="number"
+              min={1}
+              value={form.capacity}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, capacity: event.target.value }))
+              }
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="sessionVisibility">
+              Visibility
+            </label>
+            <select
+              id="sessionVisibility"
+              value={form.visibility}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  visibility: event.target.value as "public" | "private",
+                }))
+              }
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            >
+              <option value="private">Private / internal only</option>
+              <option value="public">Publicly bookable</option>
+            </select>
           </div>
 
           <div className="sm:col-span-2">
@@ -605,11 +795,11 @@ export function SessionsManager() {
             <textarea
               id="notes"
               value={form.notes}
-              onChange={(e) =>
-                setForm((current) => ({ ...current, notes: e.target.value }))
+              onChange={(event) =>
+                setForm((current) => ({ ...current, notes: event.target.value }))
               }
               className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
-              placeholder="Training focus, prep notes, or follow-up actions..."
+              placeholder="Training focus, prep notes, or parent-facing details..."
             />
           </div>
 
@@ -622,24 +812,23 @@ export function SessionsManager() {
           <div className="sm:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               type="submit"
-              disabled={saving || players.length === 0}
+              disabled={saving}
               className="bg-foreground text-background hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
             >
               {saving ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                  {editingSessionId ? "Saving..." : "Scheduling..."}
+                  {editingSessionId ? "Saving..." : "Creating..."}
                 </>
               ) : editingSessionId ? (
                 "Save session"
               ) : (
-                "Schedule session"
+                "Create session"
               )}
             </button>
             <p className="text-muted text-sm">
-              {form.selectedPlayerIds.length} player
-              {form.selectedPlayerIds.length === 1 ? "" : "s"} will be attached to
-              this session.
+              {form.selectedPlayerIds.length} internal player
+              {form.selectedPlayerIds.length === 1 ? "" : "s"} assigned.
             </p>
           </div>
         </form>
@@ -648,9 +837,7 @@ export function SessionsManager() {
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold tracking-tight">All sessions</h2>
-          {!loading ? (
-            <span className="text-muted text-sm">{sessions.length} total</span>
-          ) : null}
+          {!loading ? <span className="text-muted text-sm">{sessions.length} total</span> : null}
         </div>
 
         {error ? (
@@ -671,7 +858,7 @@ export function SessionsManager() {
             <CalendarClock className="text-muted mx-auto size-8" aria-hidden />
             <p className="mt-3 font-medium">No sessions yet</p>
             <p className="text-muted mt-1 text-sm">
-              Schedule your first 1:1 or group session to start tracking attendance.
+              Create your first bookable slot or internal session to start taking bookings.
             </p>
           </div>
         ) : null}
@@ -681,6 +868,11 @@ export function SessionsManager() {
             {sessions.map((session) => {
               const assignedNames = getAssignedPlayerNames(session, playerNameById);
               const assignedCount = assignedNames.length;
+              const bookingStats = summarizeSessionBookings(
+                sessionBookings.filter((booking) => booking.session_id === session.id),
+                session.capacity,
+              );
+              const remainingSpaces = bookingStats.remainingSpaces;
 
               return (
                 <article key={session.id} className="glass-panel rounded-2xl p-5 sm:p-6">
@@ -722,13 +914,27 @@ export function SessionsManager() {
                   <div className="mt-4 flex flex-wrap gap-2 text-xs">
                     <span className="bg-accent/10 text-accent ring-accent/20 inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ring-1">
                       <Users className="size-3.5" aria-hidden />
-                      {assignedCount} player{assignedCount === 1 ? "" : "s"}
+                      {assignedCount} internal player{assignedCount === 1 ? "" : "s"}
                     </span>
-                    {session.session_type ? (
-                      <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
-                        {session.session_type}
-                      </span>
-                    ) : null}
+                    <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
+                      {session.session_type ?? "Session"}
+                    </span>
+                    <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
+                      {formatMinutes(session.duration_minutes)}
+                    </span>
+                    <span className="border-border text-muted inline-flex items-center gap-1 rounded-full border px-2.5 py-1 font-medium">
+                      {session.is_public ? (
+                        <>
+                          <Eye className="size-3.5" aria-hidden />
+                          Public
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff className="size-3.5" aria-hidden />
+                          Private
+                        </>
+                      )}
+                    </span>
                   </div>
 
                   {assignedNames.length > 0 ? (
@@ -736,13 +942,40 @@ export function SessionsManager() {
                       {assignedNames.map((name) => (
                         <span
                           key={`${session.id}-${name}`}
-                          className="bg-black/[0.02] text-sm rounded-full px-3 py-1 dark:bg-white/[0.03]"
+                          className="rounded-full bg-black/[0.02] px-3 py-1 text-sm dark:bg-white/[0.03]"
                         >
                           {name}
                         </span>
                       ))}
                     </div>
                   ) : null}
+
+                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Price</p>
+                      <p className="mt-1 font-medium">
+                        {formatPoundsFromPence(session.price)}
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Capacity</p>
+                      <p className="mt-1 font-medium">
+                        {session.capacity} total · {remainingSpaces} left
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Bookings</p>
+                      <p className="mt-1 font-medium">
+                        {bookingStats.confirmed} confirmed · {bookingStats.waitlist} waitlist
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+                      <p className="text-muted text-xs">Availability source</p>
+                      <p className="mt-1 font-medium">
+                        {session.source_availability_id ? "Template linked" : "Manual"}
+                      </p>
+                    </div>
+                  </div>
 
                   <div className="mt-4 space-y-2 text-sm">
                     <p className="inline-flex items-center gap-1.5">
@@ -756,16 +989,16 @@ export function SessionsManager() {
                       htmlFor={`attendance-${session.id}`}
                       className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted"
                     >
-                      Attendance status for all assigned players
+                      Attendance status
                     </label>
                     <select
                       id={`attendance-${session.id}`}
                       value={session.attendance_status}
                       disabled={statusUpdatingId === session.id}
-                      onChange={(e) =>
+                      onChange={(event) =>
                         void updateAttendanceStatus(
                           session.id,
-                          e.target.value as AttendanceStatus,
+                          event.target.value as AttendanceStatus,
                         )
                       }
                       className="border-border bg-background text-foreground focus:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-70"

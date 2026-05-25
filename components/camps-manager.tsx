@@ -350,6 +350,16 @@ export function CampsManager() {
         subtitle="Create holiday blocks, set capacity and pricing, and track enrolments and waitlists."
       />
 
+      <section className="glass-panel rounded-2xl p-5 sm:p-6">
+        <p className="text-sm font-medium">Camp migration stays in phase 2.</p>
+        <p className="text-muted mt-2 text-sm leading-relaxed">
+          Camps continue to run on the current camp workflow while the new booking system
+          rolls out for 1-to-1 and Group Session bookings first. Once phase 1 is stable,
+          CoachFlow can decide whether camps should be generated from availability templates
+          or move into the same `session_bookings` model as a specialised product.
+        </p>
+      </section>
+
       {setupTables.length > 0 ? (
         <SetupRequiredPanel
           {...getSetupRequiredMessage(setupTables)}

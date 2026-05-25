@@ -18,6 +18,24 @@ type PlayerRow = {
 
 type SessionRow = {
   id: string;
+  player_id: string | null;
+  session_date: string;
+  attendance_status: string;
+};
+
+type SessionPlayerRow = {
+  session_id: string;
+  player_id: string;
+};
+
+type SessionBookingRow = {
+  session_id: string;
+  player_id: string;
+  booking_status: string;
+};
+
+type SessionAssignment = {
+  session_id: string;
   player_id: string;
   session_date: string;
   attendance_status: string;
@@ -98,20 +116,55 @@ function buildEmailHtml(subject: string, body: string) {
 </html>`;
 }
 
+function buildSessionAssignments(args: {
+  sessions: SessionRow[];
+  sessionPlayers: SessionPlayerRow[];
+  sessionBookings: SessionBookingRow[];
+}): SessionAssignment[] {
+  const sessionPlayersBySession = new Map<string, Set<string>>();
+
+  for (const link of args.sessionPlayers) {
+    const current = sessionPlayersBySession.get(link.session_id) ?? new Set<string>();
+    current.add(link.player_id);
+    sessionPlayersBySession.set(link.session_id, current);
+  }
+
+  for (const booking of args.sessionBookings) {
+    if (booking.booking_status !== "confirmed") continue;
+    const current = sessionPlayersBySession.get(booking.session_id) ?? new Set<string>();
+    current.add(booking.player_id);
+    sessionPlayersBySession.set(booking.session_id, current);
+  }
+
+  return args.sessions.flatMap((session) => {
+    const assignedPlayerIds = sessionPlayersBySession.get(session.id) ?? new Set<string>();
+    if (assignedPlayerIds.size === 0 && session.player_id) {
+      assignedPlayerIds.add(session.player_id);
+    }
+
+    return [...assignedPlayerIds].map((playerId) => ({
+      session_id: session.id,
+      player_id: playerId,
+      session_date: session.session_date,
+      attendance_status: session.attendance_status,
+    }));
+  });
+}
+
 function candidatesForAutomation(args: {
   automation: AutomationRow;
   players: PlayerRow[];
-  sessions: SessionRow[];
+  sessionAssignments: SessionAssignment[];
   subscriptions: SubscriptionRow[];
   reports: ReportRow[];
   now: Date;
 }): AutomationCandidate[] {
-  const { automation, players, sessions, subscriptions, reports, now } = args;
+  const { automation, players, sessionAssignments, subscriptions, reports, now } = args;
   const byPlayer = new Map(players.map((player) => [player.id, player]));
 
   switch (automation.type as AutomationType) {
     case "session_reminder":
-      return sessions
+      return sessionAssignments
         .filter((session) => session.attendance_status === "scheduled")
         .filter((session) => {
           const hoursUntil =
@@ -184,7 +237,7 @@ function candidatesForAutomation(args: {
     case "attendance_alert":
       return players.flatMap((player) => {
         if (!player.parent_email) return [];
-        const recent = sessions
+        const recent = sessionAssignments
           .filter((session) => session.player_id === player.id)
           .sort(
             (a, b) =>
@@ -230,6 +283,8 @@ export async function POST() {
       automationsResult,
       playersResult,
       sessionsResult,
+      sessionPlayersResult,
+      sessionBookingsResult,
       subscriptionsResult,
       reportsResult,
     ] = await Promise.all([
@@ -247,6 +302,13 @@ export async function POST() {
         .select("id, player_id, session_date, attendance_status")
         .eq("coach_id", user.id),
       supabase
+        .from("session_players")
+        .select("session_id, player_id"),
+      supabase
+        .from("session_bookings")
+        .select("session_id, player_id, booking_status")
+        .eq("coach_id", user.id),
+      supabase
         .from("parent_subscriptions")
         .select("player_id, status, current_period_end")
         .eq("coach_id", user.id),
@@ -260,6 +322,8 @@ export async function POST() {
       automationsResult.error ??
       playersResult.error ??
       sessionsResult.error ??
+      sessionPlayersResult.error ??
+      sessionBookingsResult.error ??
       subscriptionsResult.error ??
       reportsResult.error;
 
@@ -270,6 +334,11 @@ export async function POST() {
     const automations = (automationsResult.data ?? []) as AutomationRow[];
     const players = (playersResult.data ?? []) as PlayerRow[];
     const sessions = (sessionsResult.data ?? []) as SessionRow[];
+    const sessionAssignments = buildSessionAssignments({
+      sessions,
+      sessionPlayers: (sessionPlayersResult.data ?? []) as SessionPlayerRow[],
+      sessionBookings: (sessionBookingsResult.data ?? []) as SessionBookingRow[],
+    });
     const subscriptions = (subscriptionsResult.data ?? []) as SubscriptionRow[];
     const reports = (reportsResult.data ?? []) as ReportRow[];
     const resend = getResendServerClient();
@@ -278,7 +347,7 @@ export async function POST() {
       candidatesForAutomation({
         automation,
         players,
-        sessions,
+        sessionAssignments,
         subscriptions,
         reports,
         now,
