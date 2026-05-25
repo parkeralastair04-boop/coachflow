@@ -113,6 +113,9 @@ export async function POST(request: Request) {
       interval,
       status: getStripeSubscriptionStatus(subscription),
       current_period_end: getStripeCurrentPeriodEnd(subscription),
+      subscription_kind: "manual" as const,
+      recurring_series_id: null,
+      recurring_enrolment_id: null,
     };
 
     const { data, error: insertError } = await access.supabase
@@ -121,7 +124,7 @@ export async function POST(request: Request) {
         onConflict: "stripe_subscription_id",
       })
       .select(
-        "id, coach_id, player_id, stripe_customer_id, stripe_subscription_id, amount, currency, interval, status, current_period_end, created_at",
+        "id, coach_id, academy_id, player_id, stripe_customer_id, stripe_subscription_id, amount, currency, interval, status, current_period_end, subscription_kind, recurring_series_id, recurring_enrolment_id, created_at",
       )
       .single();
 

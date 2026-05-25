@@ -41,6 +41,7 @@ type SessionPlayerLink = {
 type SessionRow = {
   id: string;
   coach_id: string;
+  academy_id: string | null;
   player_id: string | null;
   group_name: string | null;
   session_date: string;
@@ -54,6 +55,7 @@ type SessionRow = {
   price: number;
   capacity: number;
   is_public: boolean;
+  booking_enabled: boolean;
   source_availability_id: string | null;
 };
 
@@ -74,11 +76,13 @@ type SessionFormState = {
   price: string;
   capacity: string;
   visibility: "public" | "private";
+  bookingEnabled: boolean;
 };
 
 const SESSION_SELECT = `
   id,
   coach_id,
+  academy_id,
   player_id,
   group_name,
   session_date,
@@ -91,6 +95,7 @@ const SESSION_SELECT = `
   price,
   capacity,
   is_public,
+  booking_enabled,
   source_availability_id,
   session_players (
     player_id,
@@ -113,6 +118,7 @@ const defaultFormState: SessionFormState = {
   price: "0.00",
   capacity: "1",
   visibility: "private",
+  bookingEnabled: false,
 };
 
 const attendanceOptions: AttendanceStatus[] = [
@@ -198,6 +204,7 @@ function sortSessions(a: SessionRow, b: SessionRow) {
 
 export function SessionsManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
+  const [academyId, setAcademyId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [availabilityTemplates, setAvailabilityTemplates] = useState<CoachAvailabilityRow[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingSummary[]>([]);
@@ -246,7 +253,7 @@ export function SessionsManager() {
         supabase
           .from("coach_availability")
           .select(
-            "id, coach_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
+            "id, coach_id, academy_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
           )
           .eq("coach_id", userId)
           .order("day_of_week", { ascending: true })
@@ -322,6 +329,17 @@ export function SessionsManager() {
         }
 
         setCoachId(user.id);
+        const { data: membership } = await supabase
+          .from("academy_members")
+          .select("academy_id")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        setAcademyId((membership?.academy_id as string | undefined) ?? null);
+        await supabase.rpc("sync_active_recurring_series_for_coach", {
+          p_coach_id: user.id,
+        });
         await loadCoachData(user.id);
       } catch (caughtError: unknown) {
         if (!cancelled) {
@@ -352,6 +370,7 @@ export function SessionsManager() {
         price: (template.default_price / 100).toFixed(2),
         capacity: String(template.default_capacity),
         visibility: template.is_public ? "public" : "private",
+        bookingEnabled: template.is_public,
       };
     });
   }
@@ -377,6 +396,7 @@ export function SessionsManager() {
       price: (session.price / 100).toFixed(2),
       capacity: String(session.capacity),
       visibility: session.is_public ? "public" : "private",
+      bookingEnabled: session.booking_enabled,
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -439,6 +459,7 @@ export function SessionsManager() {
 
     const payload = {
       coach_id: coachId,
+      academy_id: academyId,
       player_id: form.selectedPlayerIds[0] ?? null,
       group_name: form.groupName.trim() || null,
       session_date: new Date(form.sessionDateTime).toISOString(),
@@ -450,6 +471,7 @@ export function SessionsManager() {
       price: parsePoundsToPence(form.price),
       capacity,
       is_public: form.visibility === "public",
+      booking_enabled: form.visibility === "public" ? form.bookingEnabled : false,
       source_availability_id: form.availabilityTemplateId || null,
     };
 
@@ -779,12 +801,35 @@ export function SessionsManager() {
                 setForm((current) => ({
                   ...current,
                   visibility: event.target.value as "public" | "private",
+                  bookingEnabled:
+                    event.target.value === "public" ? current.bookingEnabled : false,
                 }))
               }
               className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
             >
               <option value="private">Private / internal only</option>
               <option value="public">Publicly bookable</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="sessionBookingEnabled">
+              Public booking
+            </label>
+            <select
+              id="sessionBookingEnabled"
+              value={form.bookingEnabled ? "enabled" : "disabled"}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  bookingEnabled: event.target.value === "enabled",
+                }))
+              }
+              disabled={form.visibility !== "public"}
+              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+            >
+              <option value="enabled">Booking enabled</option>
+              <option value="disabled">Booking paused</option>
             </select>
           </div>
 
@@ -935,6 +980,11 @@ export function SessionsManager() {
                         </>
                       )}
                     </span>
+                    {session.is_public ? (
+                      <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
+                        {session.booking_enabled ? "Booking live" : "Booking paused"}
+                      </span>
+                    ) : null}
                   </div>
 
                   {assignedNames.length > 0 ? (

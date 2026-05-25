@@ -28,6 +28,8 @@ import {
   isMissingTableError,
   resolveQueryError,
 } from "@/lib/supabase-errors";
+import { RecurringSeriesManager } from "@/components/recurring-series-manager";
+import type { RecurringSessionSeriesRow } from "@/lib/booking-system";
 
 type AvailabilityFormState = {
   dayOfWeek: string;
@@ -69,7 +71,9 @@ function formatTime(value: string): string {
 
 export function AvailabilityManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
+  const [academyId, setAcademyId] = useState<string | null>(null);
   const [templates, setTemplates] = useState<CoachAvailabilityRow[]>([]);
+  const [recurringSeries, setRecurringSeries] = useState<RecurringSessionSeriesRow[]>([]);
   const [form, setForm] = useState<AvailabilityFormState>(defaultForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -90,26 +94,47 @@ export function AvailabilityManager() {
 
     try {
       const supabase = createClient();
-      const { data, error: loadError } = await supabase
-        .from("coach_availability")
-        .select(
-          "id, coach_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
-        )
-        .eq("coach_id", userId)
-        .order("day_of_week", { ascending: true })
-        .order("start_time", { ascending: true });
+      const [
+        { data, error: loadError },
+        { data: recurringData, error: recurringError },
+      ] = await Promise.all([
+        supabase
+          .from("coach_availability")
+          .select(
+            "id, coach_id, academy_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
+          )
+          .eq("coach_id", userId)
+          .order("day_of_week", { ascending: true })
+          .order("start_time", { ascending: true }),
+        supabase
+          .from("recurring_session_series")
+          .select(
+            "id, coach_id, academy_id, source_availability_id, title, session_type, day_of_week, start_time, duration_minutes, location, notes, capacity, monthly_price, currency, is_public, booking_enabled, is_active, rolling_weeks, created_at",
+          )
+          .eq("coach_id", userId)
+          .order("day_of_week", { ascending: true })
+          .order("start_time", { ascending: true }),
+      ]);
 
-      if (loadError) {
+      if (loadError || recurringError) {
         if (isMissingTableError(loadError)) {
           setSetupTables(["coach_availability"]);
           return;
         }
-        const resolved = resolveQueryError(loadError, "coach_availability");
+        if (isMissingTableError(recurringError)) {
+          setSetupTables(["coach_availability", "recurring_session_series"]);
+          return;
+        }
+        const resolved = resolveQueryError(
+          loadError ?? recurringError,
+          loadError ? "coach_availability" : "recurring_session_series",
+        );
         setError(resolved.message);
         return;
       }
 
       setTemplates((data ?? []) as CoachAvailabilityRow[]);
+      setRecurringSeries((recurringData ?? []) as RecurringSessionSeriesRow[]);
     } catch (caughtError: unknown) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -141,6 +166,14 @@ export function AvailabilityManager() {
         }
 
         setCoachId(user.id);
+        const { data: membership } = await supabase
+          .from("academy_members")
+          .select("academy_id")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        setAcademyId((membership?.academy_id as string | undefined) ?? null);
         await loadTemplates(user.id);
       } catch (caughtError: unknown) {
         if (!cancelled) {
@@ -184,6 +217,7 @@ export function AvailabilityManager() {
       const supabase = createClient();
       const payload = {
         coach_id: coachId,
+        academy_id: academyId,
         day_of_week: Number.parseInt(form.dayOfWeek, 10),
         start_time: form.startTime,
         end_time: form.endTime,
@@ -198,7 +232,7 @@ export function AvailabilityManager() {
         .from("coach_availability")
         .insert(payload)
         .select(
-          "id, coach_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
+          "id, coach_id, academy_id, day_of_week, start_time, end_time, session_type, duration_minutes, default_price, default_capacity, is_public, created_at",
         )
         .single();
 
@@ -578,6 +612,16 @@ export function AvailabilityManager() {
               </div>
             ) : null}
           </section>
+
+          {coachId ? (
+            <RecurringSeriesManager
+              coachId={coachId}
+              academyId={academyId}
+              availabilityTemplates={templates}
+              series={recurringSeries}
+              onSeriesChange={setRecurringSeries}
+            />
+          ) : null}
         </>
       ) : null}
     </div>

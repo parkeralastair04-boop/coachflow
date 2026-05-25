@@ -25,7 +25,7 @@ export async function GET() {
         access.supabase
           .from("parent_subscriptions")
           .select(
-            "id, coach_id, player_id, stripe_customer_id, stripe_subscription_id, amount, currency, interval, status, current_period_end, created_at",
+            "id, coach_id, academy_id, player_id, stripe_customer_id, stripe_subscription_id, amount, currency, interval, status, current_period_end, subscription_kind, recurring_series_id, recurring_enrolment_id, recurring_series:recurring_session_series(title), created_at",
           )
           .eq("coach_id", access.coachId)
           .order("created_at", { ascending: false }),
@@ -60,14 +60,11 @@ export async function GET() {
             status !== subscription.status ||
             currentPeriodEnd !== subscription.current_period_end
           ) {
-            await access.supabase
-              .from("parent_subscriptions")
-              .update({
-                status,
-                current_period_end: currentPeriodEnd,
-              })
-              .eq("id", subscription.id)
-              .eq("coach_id", access.coachId);
+            await access.supabase.rpc("sync_recurring_subscription_state", {
+              p_stripe_subscription_id: subscription.stripe_subscription_id,
+              p_status: status,
+              p_current_period_end: currentPeriodEnd,
+            });
           }
 
           return {
@@ -80,6 +77,10 @@ export async function GET() {
         }
       }),
     );
+
+    await access.supabase.rpc("sync_active_recurring_series_for_coach", {
+      p_coach_id: access.coachId,
+    });
 
     return NextResponse.json({
       players,

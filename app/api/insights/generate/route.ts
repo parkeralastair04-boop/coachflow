@@ -17,9 +17,10 @@ type PlayerRow = {
 
 type SessionRow = {
   id: string;
-  player_id: string;
+  player_id: string | null;
   session_date: string;
   attendance_status: string;
+  session_players?: { player_id: string }[] | null;
 };
 
 type ReportRow = {
@@ -52,8 +53,10 @@ type CampEnrolmentRow = {
 
 type BookingRow = {
   id: string;
-  service_type: string;
-  status: string;
+  session_id: string;
+  player_id: string;
+  booking_status: string;
+  amount: number;
   created_at: string;
 };
 
@@ -94,7 +97,7 @@ function fallbackInsights(data: BusinessData): BusinessInsight[] {
 
   const missedByPlayer = new Map<string, number>();
   for (const session of data.sessions) {
-    if (session.attendance_status === "missed") {
+    if (session.attendance_status === "missed" && session.player_id) {
       missedByPlayer.set(
         session.player_id,
         (missedByPlayer.get(session.player_id) ?? 0) + 1,
@@ -134,7 +137,7 @@ function fallbackInsights(data: BusinessData): BusinessInsight[] {
     0,
   );
   const bookingPendingCount = data.bookings.filter(
-    (booking) => booking.status === "pending",
+    (booking) => booking.booking_status === "pending",
   ).length;
   const convertedReferrals = data.referrals.filter(
     (referral) => referral.status === "converted",
@@ -274,11 +277,12 @@ export async function POST() {
     const [
       playersResult,
       sessionsResult,
+      sessionPlayersResult,
+      sessionBookingsResult,
       reportsResult,
       subscriptionsResult,
       campsResult,
       enrolmentsResult,
-      bookingsResult,
       referralsResult,
     ] = await Promise.all([
       supabase
@@ -288,6 +292,14 @@ export async function POST() {
       supabase
         .from("sessions")
         .select("id, player_id, session_date, attendance_status")
+        .eq("coach_id", user.id),
+      supabase
+        .from("session_players")
+        .select("session_id, player_id")
+        .eq("coach_id", user.id),
+      supabase
+        .from("session_bookings")
+        .select("id, session_id, player_id, booking_status, amount, created_at")
         .eq("coach_id", user.id),
       supabase
         .from("progress_reports")
@@ -306,10 +318,6 @@ export async function POST() {
         .select("camp_id, status")
         .eq("coach_id", user.id),
       supabase
-        .from("bookings")
-        .select("id, service_type, status, created_at")
-        .eq("coach_id", user.id),
-      supabase
         .from("referrals")
         .select("id, status, reward_value, created_at")
         .eq("referrer_id", user.id),
@@ -318,25 +326,68 @@ export async function POST() {
     const firstError =
       playersResult.error ??
       sessionsResult.error ??
+      sessionPlayersResult.error ??
+      sessionBookingsResult.error ??
       reportsResult.error ??
       subscriptionsResult.error ??
       campsResult.error ??
       enrolmentsResult.error ??
-      bookingsResult.error ??
       referralsResult.error;
 
     if (firstError) {
       return NextResponse.json({ error: firstError.message }, { status: 500 });
     }
 
+    const sessionPlayerLinks = (sessionPlayersResult.data ?? []) as Array<{
+      session_id: string;
+      player_id: string;
+    }>;
+    const sessionBookings = (sessionBookingsResult.data ?? []) as BookingRow[];
+    const playerIdsBySession = new Map<string, Set<string>>();
+
+    for (const session of (sessionsResult.data ?? []) as SessionRow[]) {
+      const assigned = new Set<string>();
+      if (session.player_id) assigned.add(session.player_id);
+      playerIdsBySession.set(session.id, assigned);
+    }
+
+    for (const link of sessionPlayerLinks) {
+      const current = playerIdsBySession.get(link.session_id) ?? new Set<string>();
+      current.add(link.player_id);
+      playerIdsBySession.set(link.session_id, current);
+    }
+
+    for (const booking of sessionBookings) {
+      if (booking.booking_status !== "confirmed") continue;
+      const current = playerIdsBySession.get(booking.session_id) ?? new Set<string>();
+      current.add(booking.player_id);
+      playerIdsBySession.set(booking.session_id, current);
+    }
+
+    const sessionAssignments = ((sessionsResult.data ?? []) as SessionRow[]).flatMap((session) => {
+      const playerIds = [...(playerIdsBySession.get(session.id) ?? new Set<string>())];
+      if (playerIds.length === 0) {
+        return [] as SessionRow[];
+      }
+      return playerIds.map(
+        (playerId) =>
+          ({
+            id: session.id,
+            player_id: playerId,
+            session_date: session.session_date,
+            attendance_status: session.attendance_status,
+          }) satisfies SessionRow,
+      );
+    });
+
     const businessData: BusinessData = {
       players: (playersResult.data ?? []) as PlayerRow[],
-      sessions: (sessionsResult.data ?? []) as SessionRow[],
+      sessions: sessionAssignments,
       reports: (reportsResult.data ?? []) as ReportRow[],
       subscriptions: (subscriptionsResult.data ?? []) as SubscriptionRow[],
       camps: (campsResult.data ?? []) as CampRow[],
       enrolments: (enrolmentsResult.data ?? []) as CampEnrolmentRow[],
-      bookings: (bookingsResult.data ?? []) as BookingRow[],
+      bookings: sessionBookings,
       referrals: (referralsResult.data ?? []) as ReferralRow[],
     };
 

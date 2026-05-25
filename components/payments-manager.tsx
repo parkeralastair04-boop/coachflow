@@ -29,6 +29,7 @@ type ParentPlayer = {
 type ParentSubscription = {
   id: string;
   coach_id: string;
+  academy_id: string | null;
   player_id: string;
   stripe_customer_id: string;
   stripe_subscription_id: string | null;
@@ -37,6 +38,10 @@ type ParentSubscription = {
   interval: BillingInterval | null;
   status: string;
   current_period_end: string | null;
+  subscription_kind: "manual" | "recurring_series";
+  recurring_series_id: string | null;
+  recurring_enrolment_id: string | null;
+  recurring_series?: { title: string | null } | { title: string | null }[] | null;
   created_at: string;
 };
 
@@ -102,6 +107,13 @@ function isOverdue(subscription: ParentSubscription): boolean {
     new Date(subscription.current_period_end).getTime() < Date.now() &&
     subscription.status !== "active"
   );
+}
+
+function getSeriesTitle(subscription: ParentSubscription): string | null {
+  if (!subscription.recurring_series) return null;
+  return Array.isArray(subscription.recurring_series)
+    ? subscription.recurring_series[0]?.title ?? null
+    : subscription.recurring_series.title ?? null;
 }
 
 export function PaymentsManager() {
@@ -630,7 +642,17 @@ export function PaymentsManager() {
                             overdue / failed
                           </span>
                         ) : null}
+                        <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
+                          {latestSubscription.subscription_kind === "recurring_series"
+                            ? "Series-backed"
+                            : "Manual"}
+                        </span>
                       </div>
+                      {latestSubscription.subscription_kind === "recurring_series" ? (
+                        <p className="text-muted mt-3 text-xs">
+                          {getSeriesTitle(latestSubscription) ?? "Recurring coaching series"}
+                        </p>
+                      ) : null}
                       <dl className="mt-4 grid grid-cols-2 gap-3">
                         <div>
                           <dt className="text-muted text-xs">Amount</dt>

@@ -76,6 +76,7 @@ type ParentSubscriptionRow = {
   currency: string;
   interval: "monthly" | "weekly" | null;
   status: string;
+  subscription_kind?: "manual" | "recurring_series";
   created_at: string;
 };
 
@@ -402,7 +403,9 @@ export function AnalyticsManager() {
           .eq("coach_id", user.id),
         supabase
           .from("parent_subscriptions")
-          .select("id, coach_id, amount, currency, interval, status, created_at")
+          .select(
+            "id, coach_id, amount, currency, interval, status, subscription_kind, created_at",
+          )
           .eq("coach_id", user.id),
         supabase
           .from("camps")
@@ -494,6 +497,9 @@ export function AnalyticsManager() {
 
     const activeSubscriptions = data.subscriptions.filter((subscription) =>
       isActiveSubscription(subscription.status),
+    );
+    const activeRecurringSubscriptions = activeSubscriptions.filter(
+      (subscription) => subscription.subscription_kind === "recurring_series",
     );
     const totalSessions = data.sessions.length;
     const publicSessions = data.sessions.filter((session) => session.is_public);
@@ -631,6 +637,10 @@ export function AnalyticsManager() {
     const attendanceRate =
       totalAssignments > 0 ? (attendedAssignments / totalAssignments) * 100 : 0;
     const bookingRevenue = paidBookings.reduce((sum, booking) => sum + booking.amount / 100, 0);
+    const recurringSubscriptionMrr = activeRecurringSubscriptions.reduce(
+      (sum, subscription) => sum + subscriptionMrr(subscription),
+      0,
+    );
     const bookingConversion =
       totalBookingAttempts > 0 ? (confirmedBookings.length / totalBookingAttempts) * 100 : 0;
     const averagePublicOccupancy =
@@ -666,7 +676,9 @@ export function AnalyticsManager() {
         attendanceRate,
         reportsGenerated: data.reports.length,
         activeParentSubscriptions: activeSubscriptions.length,
+        activeRecurringSubscriptions: activeRecurringSubscriptions.length,
         mrr,
+        recurringSubscriptionMrr,
         bookingRevenue,
         bookingConversion,
         averagePublicOccupancy,
@@ -789,9 +801,21 @@ export function AnalyticsManager() {
               icon={PoundSterling}
             />
             <StatCard
+              label="Recurring Child Subscriptions"
+              value={String(analytics.metrics.activeRecurringSubscriptions)}
+              hint="Series-backed weekly subscriptions"
+              icon={Users}
+            />
+            <StatCard
               label="Monthly Recurring Revenue"
               value={currency(analytics.metrics.mrr)}
               hint="Normalised MRR"
+              icon={PoundSterling}
+            />
+            <StatCard
+              label="Recurring Series MRR"
+              value={currency(analytics.metrics.recurringSubscriptionMrr)}
+              hint="Series-backed portion of MRR"
               icon={PoundSterling}
             />
             <StatCard

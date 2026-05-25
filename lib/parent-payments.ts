@@ -14,6 +14,7 @@ export type ParentPlayerRow = {
 export type ParentSubscriptionRow = {
   id: string;
   coach_id: string;
+  academy_id: string | null;
   player_id: string;
   stripe_customer_id: string;
   stripe_subscription_id: string | null;
@@ -22,6 +23,10 @@ export type ParentSubscriptionRow = {
   interval: "monthly" | "weekly" | null;
   status: string;
   current_period_end: string | null;
+  subscription_kind: "manual" | "recurring_series";
+  recurring_series_id: string | null;
+  recurring_enrolment_id: string | null;
+  recurring_series?: { title: string | null } | { title: string | null }[] | null;
   created_at: string;
 };
 

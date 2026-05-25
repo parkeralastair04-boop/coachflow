@@ -1,13 +1,15 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import {
   buildBookingEmailHtml,
   buildBookingEmailText,
 } from "@/lib/booking-emails";
 import { type PublicSessionRow } from "@/lib/booking-system";
-import { getPublicAcademyForCoach } from "@/lib/academy";
+import {
+  createPublicSupabaseClient,
+  loadPublicBookingPayload,
+  type PublicPortalTenant,
+} from "@/lib/public-booking";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
-import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 import { getStripeServerClient } from "@/lib/stripe";
 
 type BookingBody = {
@@ -43,20 +45,6 @@ function getErrorMessage(error: unknown) {
   return "Unable to submit booking.";
 }
 
-function getCoachId() {
-  return process.env.BOOKING_COACH_ID ?? process.env.NEXT_PUBLIC_BOOKING_COACH_ID;
-}
-
-function createPublicSupabaseClient() {
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error("Missing Supabase environment variables.");
-  }
-
-  return createSupabaseClient(supabaseUrl, supabaseAnonKey, {
-    auth: { persistSession: false },
-  });
-}
-
 function formatSessionDate(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -68,6 +56,22 @@ function formatSessionDate(value: string) {
 
 function getSessionLabel(session: PublicSessionRow) {
   return session.group_name?.trim() || session.session_type?.trim() || "Coaching session";
+}
+
+function getTenantFromRequest(request: Request): PublicPortalTenant | null {
+  const url = new URL(request.url);
+  const coachSlug = url.searchParams.get("coachSlug")?.trim();
+  const academySlug = url.searchParams.get("academySlug")?.trim();
+
+  if (coachSlug) return { kind: "coach", slug: coachSlug };
+  if (academySlug) return { kind: "academy", slug: academySlug };
+  return null;
+}
+
+function getPortalUrl(origin: string, tenant: PublicPortalTenant) {
+  return tenant.kind === "coach"
+    ? `${origin}/book/${tenant.slug}`
+    : `${origin}/academy/${tenant.slug}/book`;
 }
 
 async function sendParentEmail(args: {
@@ -115,38 +119,22 @@ async function sendParentEmail(args: {
   }
 }
 
-async function loadPublicSessions(coachId: string) {
-  const supabase = createPublicSupabaseClient();
-  const { data, error } = await supabase.rpc("list_public_sessions", {
-    p_coach_id: coachId,
-  });
-
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []) as PublicSessionRow[];
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const coachId = getCoachId();
-    if (!coachId) {
+    const tenant = getTenantFromRequest(request);
+    if (!tenant) {
       return NextResponse.json(
-        { error: "Missing BOOKING_COACH_ID environment variable." },
-        { status: 500 },
+        { error: "coachSlug or academySlug is required." },
+        { status: 400 },
       );
     }
 
-    const [academy, sessions] = await Promise.all([
-      getPublicAcademyForCoach(coachId),
-      loadPublicSessions(coachId),
-    ]);
+    const payload = await loadPublicBookingPayload(tenant);
+    if (!payload) {
+      return NextResponse.json({ error: "Booking portal not found." }, { status: 404 });
+    }
 
-    return NextResponse.json({
-      academy,
-      sessions,
-    });
+    return NextResponse.json(payload);
   } catch (error: unknown) {
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
@@ -154,11 +142,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const coachId = getCoachId();
-    if (!coachId) {
+    const tenant = getTenantFromRequest(request);
+    if (!tenant) {
       return NextResponse.json(
-        { error: "Missing BOOKING_COACH_ID environment variable." },
-        { status: 500 },
+        { error: "coachSlug or academySlug is required." },
+        { status: 400 },
       );
     }
 
@@ -176,21 +164,21 @@ export async function POST(request: Request) {
       );
     }
 
-    const [academy, sessions] = await Promise.all([
-      getPublicAcademyForCoach(coachId),
-      loadPublicSessions(coachId),
-    ]);
+    const payload = await loadPublicBookingPayload(tenant);
+    if (!payload) {
+      return NextResponse.json({ error: "Booking portal not found." }, { status: 404 });
+    }
 
-    const selectedSession = sessions.find((session) => session.session_id === sessionId);
-    if (!selectedSession) {
+    const selectedSession = payload.sessions.find((session) => session.session_id === sessionId);
+    if (!selectedSession || !payload.portal.booking_enabled) {
       return NextResponse.json(
         { error: "Selected session is no longer available." },
         { status: 404 },
       );
     }
 
-    const academyName = academy?.name ?? "CoachFlow";
-    const primaryColor = academy?.primary_color ?? "#10b981";
+    const academyName = payload.portal.display_name ?? "CoachFlow";
+    const primaryColor = payload.portal.primary_color ?? "#10b981";
     const supabase = createPublicSupabaseClient();
 
     const { data, error } = await supabase.rpc("create_public_session_booking", {
@@ -256,6 +244,7 @@ export async function POST(request: Request) {
     const sessionLabel = getSessionLabel(selectedSession);
     const stripe = getStripeServerClient();
     const origin = new URL(request.url).origin;
+    const portalUrl = getPortalUrl(origin, tenant);
     const stripeSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: parentEmail,
@@ -272,10 +261,10 @@ export async function POST(request: Request) {
           },
         },
       ],
-      success_url: `${origin}/book?booking=success&checkout_session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/book?booking=cancelled`,
+      success_url: `${portalUrl}?booking=success&checkout_session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${portalUrl}?booking=cancelled`,
       metadata: {
-        coach_id: coachId,
+        coach_id: selectedSession.coach_id,
         session_id: sessionId,
         booking_id: booking.booking_id,
         player_id: booking.player_id,
@@ -287,6 +276,8 @@ export async function POST(request: Request) {
         session_label: sessionLabel,
         session_date: selectedSession.session_date,
         session_location: selectedSession.location ?? "",
+        portal_kind: tenant.kind,
+        portal_slug: tenant.slug,
       },
     });
 

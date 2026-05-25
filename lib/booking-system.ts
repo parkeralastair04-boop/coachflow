@@ -15,6 +15,7 @@ export const DAY_OPTIONS = [
 export type CoachAvailabilityRow = {
   id: string;
   coach_id: string;
+  academy_id?: string | null;
   day_of_week: number;
   start_time: string;
   end_time: string;
@@ -42,6 +43,7 @@ export type SessionPaymentStatus =
 export type SessionBookingRow = {
   id: string;
   coach_id: string;
+  academy_id?: string | null;
   session_id: string;
   player_id: string;
   parent_name: string | null;
@@ -55,12 +57,16 @@ export type SessionBookingRow = {
   expires_at?: string | null;
   stripe_checkout_session_id?: string | null;
   stripe_payment_intent_id?: string | null;
+  recurring_enrolment_id?: string | null;
   created_at: string;
 };
 
 export type PublicSessionRow = {
   session_id: string;
   coach_id: string;
+  academy_id?: string | null;
+  coach_slug?: string | null;
+  academy_slug?: string | null;
   group_name: string | null;
   session_type: string | null;
   session_date: string;
@@ -72,6 +78,67 @@ export type PublicSessionRow = {
   remaining_spaces: number;
   waitlist_count: number;
   is_full: boolean;
+};
+
+export type PublicRecurringSeriesRow = {
+  recurring_series_id: string;
+  coach_id: string;
+  academy_id: string | null;
+  coach_slug: string | null;
+  academy_slug: string | null;
+  title: string;
+  session_type: string;
+  day_of_week: number;
+  start_time: string;
+  duration_minutes: number;
+  location: string | null;
+  notes: string | null;
+  capacity: number;
+  monthly_price: number;
+  currency: string;
+  active_subscriptions: number;
+  remaining_spaces: number;
+};
+
+export type RecurringSessionSeriesRow = {
+  id: string;
+  coach_id: string;
+  academy_id: string | null;
+  source_availability_id: string | null;
+  title: string;
+  session_type: SessionTypeOption;
+  day_of_week: number;
+  start_time: string;
+  duration_minutes: number;
+  location: string | null;
+  notes: string | null;
+  capacity: number;
+  monthly_price: number;
+  currency: string;
+  is_public: boolean;
+  booking_enabled: boolean;
+  is_active: boolean;
+  rolling_weeks: number;
+  created_at: string;
+};
+
+export type PlayerRecurringEnrolmentRow = {
+  id: string;
+  coach_id: string;
+  academy_id: string | null;
+  recurring_series_id: string;
+  player_id: string;
+  parent_name: string | null;
+  parent_email: string;
+  parent_phone: string | null;
+  notes: string | null;
+  status: "pending" | "active" | "paused" | "cancelled";
+  billing_interval: "monthly";
+  monthly_price: number;
+  starts_on: string;
+  ends_on: string | null;
+  stripe_checkout_session_id: string | null;
+  created_at: string;
 };
 
 export function getDayLabel(dayOfWeek: number): string {
