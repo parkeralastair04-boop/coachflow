@@ -24,13 +24,29 @@ type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
 type PlayerRow = {
   id: string;
+  player_name: string;
+};
+
+type SessionPlayerLink = {
+  player_id: string;
+  player: {
+    id: string;
+    player_name: string;
+  }[] | {
+    id: string;
+    player_name: string;
+  } | null;
 };
 
 type SessionRow = {
   id: string;
   coach_id: string;
+  player_id: string | null;
+  group_name: string | null;
+  session_type: string | null;
   session_date: string;
   attendance_status: AttendanceStatus;
+  session_players: SessionPlayerLink[] | null;
 };
 
 type ReportRow = {
@@ -66,6 +82,13 @@ type CampEnrolmentRow = {
 type ChartPoint = {
   label: string;
   value: number;
+};
+
+type AttendanceBreakdownRow = {
+  label: string;
+  total: number;
+  attended: number;
+  rate: number;
 };
 
 type AnalyticsData = {
@@ -136,6 +159,40 @@ function isActiveSubscription(status: string): boolean {
   return status === "active" || status === "trialing";
 }
 
+function getAssignedPlayerLinks(
+  session: SessionRow,
+  playerNameById: Map<string, string>,
+): { player_id: string; player_name: string }[] {
+  const linkedPlayers = (session.session_players ?? [])
+    .map((link) => {
+      const player = Array.isArray(link.player) ? link.player[0] : link.player;
+      return {
+        player_id: link.player_id,
+        player_name:
+          player?.player_name ?? playerNameById.get(link.player_id) ?? "Unknown player",
+      };
+    })
+    .filter((player) => Boolean(player.player_id));
+
+  if (linkedPlayers.length > 0) return linkedPlayers;
+  return session.player_id
+    ? [
+        {
+          player_id: session.player_id,
+          player_name: playerNameById.get(session.player_id) ?? "Unknown player",
+        },
+      ]
+    : [];
+}
+
+function getGroupLabel(session: SessionRow): string {
+  return (
+    session.group_name?.trim() ||
+    session.session_type?.trim() ||
+    "Ungrouped session"
+  );
+}
+
 function StatCard({
   label,
   value,
@@ -203,6 +260,45 @@ function MiniBarChart({
   );
 }
 
+function AttendanceBreakdownList({
+  title,
+  rows,
+  emptyMessage,
+}: {
+  title: string;
+  rows: AttendanceBreakdownRow[];
+  emptyMessage: string;
+}) {
+  return (
+    <section className="glass-panel rounded-2xl p-6 sm:p-7">
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      {rows.length === 0 ? (
+        <p className="text-muted mt-4 text-sm">{emptyMessage}</p>
+      ) : (
+        <div className="mt-5 space-y-4">
+          {rows.map((row) => (
+            <div key={row.label}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-w-0 truncate text-sm font-medium">{row.label}</p>
+                <p className="text-muted text-xs">
+                  {row.attended}/{row.total} attended
+                </p>
+              </div>
+              <div className="mt-2 h-2 rounded-full bg-black/[0.05] dark:bg-white/[0.06]">
+                <div
+                  className="bg-accent h-full rounded-full transition-all"
+                  style={{ width: `${Math.max(row.rate, row.total > 0 ? 6 : 0)}%` }}
+                />
+              </div>
+              <p className="text-muted mt-1 text-xs">{percentage(row.rate)} attendance rate</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function AnalyticsManager() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -238,10 +334,30 @@ export function AnalyticsManager() {
         campsResult,
         enrolmentsResult,
       ] = await Promise.all([
-        supabase.from("players").select("id").eq("coach_id", user.id),
+        supabase
+          .from("players")
+          .select("id, player_name")
+          .eq("coach_id", user.id),
         supabase
           .from("sessions")
-          .select("id, coach_id, session_date, attendance_status")
+          .select(
+            `
+              id,
+              coach_id,
+              player_id,
+              group_name,
+              session_type,
+              session_date,
+              attendance_status,
+              session_players (
+                player_id,
+                player:players (
+                  id,
+                  player_name
+                )
+              )
+            `,
+          )
           .eq("coach_id", user.id),
         supabase
           .from("progress_reports")
@@ -333,15 +449,24 @@ export function AnalyticsManager() {
     const monthKeys = getLastSixMonthKeys();
     const emptySeries = () =>
       Object.fromEntries(monthKeys.map((key) => [key, 0])) as Record<string, number>;
+    const playerNameById = new Map(
+      data.players.map((player) => [player.id, player.player_name]),
+    );
 
     const activeSubscriptions = data.subscriptions.filter((subscription) =>
       isActiveSubscription(subscription.status),
     );
     const totalSessions = data.sessions.length;
-    const attendedSessions = data.sessions.filter(
-      (session) => session.attendance_status === "attended",
-    ).length;
-    const attendanceRate = totalSessions > 0 ? (attendedSessions / totalSessions) * 100 : 0;
+    const attendanceByPlayer = new Map<
+      string,
+      { label: string; total: number; attended: number }
+    >();
+    const attendanceByGroup = new Map<
+      string,
+      { label: string; total: number; attended: number }
+    >();
+    let totalAssignments = 0;
+    let attendedAssignments = 0;
 
     const enrolledByCamp = new Map<string, number>();
     for (const enrolment of data.enrolments) {
@@ -391,12 +516,47 @@ export function AnalyticsManager() {
     for (const session of data.sessions) {
       const key = monthKey(new Date(session.session_date));
       if (!(key in sessionVolumeSeries)) continue;
+
+      const assignedPlayers = getAssignedPlayerLinks(session, playerNameById);
+      const assignedCount = Math.max(assignedPlayers.length, 1);
+
       sessionVolumeSeries[key] += 1;
-      attendanceTotalSeries[key] += 1;
+      attendanceTotalSeries[key] += assignedCount;
+      totalAssignments += assignedCount;
+
       if (session.attendance_status === "attended") {
-        attendedSeries[key] += 1;
+        attendedSeries[key] += assignedCount;
+        attendedAssignments += assignedCount;
       }
+
+      for (const player of assignedPlayers) {
+        const current = attendanceByPlayer.get(player.player_id) ?? {
+          label: player.player_name,
+          total: 0,
+          attended: 0,
+        };
+        current.total += 1;
+        if (session.attendance_status === "attended") {
+          current.attended += 1;
+        }
+        attendanceByPlayer.set(player.player_id, current);
+      }
+
+      const groupLabel = getGroupLabel(session);
+      const currentGroup = attendanceByGroup.get(groupLabel) ?? {
+        label: groupLabel,
+        total: 0,
+        attended: 0,
+      };
+      currentGroup.total += assignedCount;
+      if (session.attendance_status === "attended") {
+        currentGroup.attended += assignedCount;
+      }
+      attendanceByGroup.set(groupLabel, currentGroup);
     }
+
+    const attendanceRate =
+      totalAssignments > 0 ? (attendedAssignments / totalAssignments) * 100 : 0;
 
     const reportsSeries = emptySeries();
     for (const report of data.reports) {
@@ -435,6 +595,22 @@ export function AnalyticsManager() {
           label: monthLabel(key),
           value: reportsSeries[key],
         })),
+      },
+      breakdowns: {
+        players: [...attendanceByPlayer.values()]
+          .map((row) => ({
+            ...row,
+            rate: row.total > 0 ? (row.attended / row.total) * 100 : 0,
+          }))
+          .sort((a, b) => b.total - a.total || b.rate - a.rate)
+          .slice(0, 6),
+        groups: [...attendanceByGroup.values()]
+          .map((row) => ({
+            ...row,
+            rate: row.total > 0 ? (row.attended / row.total) * 100 : 0,
+          }))
+          .sort((a, b) => b.total - a.total || b.rate - a.rate)
+          .slice(0, 6),
       },
     };
   }, [data]);
@@ -542,6 +718,19 @@ export function AnalyticsManager() {
               title="Reports generated by month"
               points={analytics.charts.reports}
               accent="bg-amber-500"
+            />
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-2">
+            <AttendanceBreakdownList
+              title="Attendance per player"
+              rows={analytics.breakdowns.players}
+              emptyMessage="Assigned players will appear here once sessions are linked."
+            />
+            <AttendanceBreakdownList
+              title="Attendance per group"
+              rows={analytics.breakdowns.groups}
+              emptyMessage="Named session groups will appear here once you start scheduling them."
             />
           </section>
         </>

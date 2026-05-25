@@ -36,9 +36,9 @@ export const FEATURE_INFO: Record<FeatureInfoKey, FeatureInfoEntry> = {
   },
   sessions: {
     title: "Sessions",
-    what: "Schedule coaching blocks with dates, locations, capacity, and session types your parents can book into.",
-    why: "A clear calendar keeps coaches aligned and gives parents confidence about when and where training happens.",
-    usage: "Create sessions weekly, duplicate recurring blocks, and archive past dates once registers are complete.",
+    what: "Schedule 1:1s or group coaching blocks with dates, locations, optional group names, and multiple assigned players.",
+    why: "A clear calendar keeps coaches aligned and makes grouped session delivery easier to organise and track.",
+    usage: "Create group names for recurring squads, assign every player in the selector, then use the register to mark the whole session quickly.",
     includedIn: ["starter", "pro", "academy"],
   },
   registers: {
@@ -64,9 +64,9 @@ export const FEATURE_INFO: Record<FeatureInfoKey, FeatureInfoEntry> = {
   },
   analytics: {
     title: "Analytics",
-    what: "Dashboards for player growth, session delivery, revenue, reports sent, and subscription health.",
-    why: "Spot trends early—quiet squads, rising churn, or camp gaps—before they hit cashflow.",
-    usage: "Review weekly during admin time; use charts before planning terms, pricing, or marketing pushes.",
+    what: "Dashboards for player growth, session delivery, group attendance, revenue, reports sent, and subscription health.",
+    why: "Spot trends early—quiet squads, rising churn, or underperforming groups—before they hit cashflow.",
+    usage: "Review weekly during admin time; compare attendance by player and by group before planning terms or coaching interventions.",
     includedIn: ["pro", "academy"],
   },
   payments: {

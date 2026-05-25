@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   CalendarCheck,
   Loader2,
   MapPin,
   RotateCw,
   ShieldCheck,
+  Users,
   WifiOff,
 } from "lucide-react";
 import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
@@ -15,19 +16,27 @@ import { cn } from "@/lib/utils";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
-type PlayerOption = {
-  id: string;
-  player_name: string;
+type SessionPlayerLink = {
+  player_id: string;
+  player: {
+    id: string;
+    player_name: string;
+  }[] | {
+    id: string;
+    player_name: string;
+  } | null;
 };
 
 type RegisterSession = {
   id: string;
   coach_id: string;
-  player_id: string;
+  player_id: string | null;
+  group_name: string | null;
   session_date: string;
   session_type: string | null;
   location: string | null;
   attendance_status: AttendanceStatus;
+  session_players: SessionPlayerLink[] | null;
 };
 
 type OfflineAttendanceChange = {
@@ -46,6 +55,24 @@ const attendanceOptions: AttendanceStatus[] = [
   "missed",
   "cancelled",
 ];
+
+const SESSION_SELECT = `
+  id,
+  coach_id,
+  player_id,
+  group_name,
+  session_date,
+  session_type,
+  location,
+  attendance_status,
+  session_players (
+    player_id,
+    player:players (
+      id,
+      player_name
+    )
+  )
+`;
 
 const DB_NAME = "coachflow-registers";
 const DB_VERSION = 1;
@@ -74,6 +101,28 @@ function formatSessionDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).format(parsed);
+}
+
+function getAssignedPlayerNames(session: RegisterSession): string[] {
+  const linkedNames = (session.session_players ?? [])
+    .map((link) => {
+      const player = Array.isArray(link.player) ? link.player[0] : link.player;
+      return player?.player_name ?? null;
+    })
+    .filter((name): name is string => Boolean(name));
+
+  if (linkedNames.length > 0) return linkedNames;
+  return session.player_id ? ["Unknown player"] : [];
+}
+
+function getRegisterTitle(session: RegisterSession): string {
+  if (session.group_name?.trim()) return session.group_name;
+  if (session.session_type?.trim()) return session.session_type;
+
+  const names = getAssignedPlayerNames(session);
+  if (names.length === 0) return "Untitled session";
+  if (names.length <= 2) return names.join(" & ");
+  return `${names.slice(0, 2).join(", ")} +${names.length - 2} more`;
 }
 
 function queueKey(coachId: string, sessionId: string): string {
@@ -217,7 +266,6 @@ function StatusIndicator({
 
 export function RegistersManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
-  const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [sessions, setSessions] = useState<RegisterSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -229,17 +277,14 @@ export function RegistersManager() {
     typeof navigator === "undefined" || navigator.onLine ? "online" : "offline",
   );
   const [pendingCount, setPendingCount] = useState(0);
+  const [queuedSessionIds, setQueuedSessionIds] = useState<string[]>([]);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const syncingRef = useRef(false);
-
-  const playerNameById = useMemo(
-    () => new Map(players.map((player) => [player.id, player.player_name])),
-    [players],
-  );
 
   const refreshPendingCount = useCallback(async () => {
     const queued = await getQueuedChanges();
     setPendingCount(queued.length);
+    setQueuedSessionIds(queued.map((change) => change.sessionId));
     return queued;
   }, []);
 
@@ -248,34 +293,17 @@ export function RegistersManager() {
     setError(null);
     try {
       const supabase = createClient();
-      const [
-        { data: playersData, error: playersError },
-        { data: sessionsData, error: sessionsError },
-      ] = await Promise.all([
-        supabase
-          .from("players")
-          .select("id, player_name")
-          .eq("coach_id", userId)
-          .order("player_name", { ascending: true }),
-        supabase
-          .from("sessions")
-          .select(
-            "id, coach_id, player_id, session_date, session_type, location, attendance_status",
-          )
-          .eq("coach_id", userId)
-          .order("session_date", { ascending: false }),
-      ]);
+      const { data: sessionsData, error: sessionsError } = await supabase
+        .from("sessions")
+        .select(SESSION_SELECT)
+        .eq("coach_id", userId)
+        .order("session_date", { ascending: false });
 
-      if (playersError) {
-        setError(playersError.message);
-        return;
-      }
       if (sessionsError) {
         setError(sessionsError.message);
         return;
       }
 
-      const safePlayers = (playersData ?? []) as PlayerOption[];
       const safeSessions = (sessionsData ?? []) as RegisterSession[];
       const queued = await refreshPendingCount();
       const queuedBySession = new Map(
@@ -284,7 +312,6 @@ export function RegistersManager() {
           .map((change) => [change.sessionId, change.attendanceStatus]),
       );
 
-      setPlayers(safePlayers);
       setSessions(
         safeSessions.map((session) => ({
           ...session,
@@ -546,9 +573,7 @@ export function RegistersManager() {
 
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Today&apos;s register
-          </h2>
+          <h2 className="text-lg font-semibold tracking-tight">Session registers</h2>
           {!loading ? (
             <span className="text-muted text-sm">{sessions.length} sessions</span>
           ) : null}
@@ -591,15 +616,15 @@ export function RegistersManager() {
                 className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6"
               >
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <h3 className="text-lg font-semibold tracking-tight">
-                      {playerNameById.get(session.player_id) ?? "Unknown player"}
+                      {getRegisterTitle(session)}
                     </h3>
                     <p className="text-muted mt-1 text-sm">
                       {formatSessionDate(session.session_date)}
                     </p>
                   </div>
-                  {pendingCount > 0 ? (
+                  {queuedSessionIds.includes(session.id) ? (
                     <span className="bg-amber-500/10 text-amber-700 ring-amber-500/25 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 dark:text-amber-300">
                       local queue
                     </span>
@@ -607,6 +632,11 @@ export function RegistersManager() {
                 </div>
 
                 <div className="mt-4 space-y-2 text-sm">
+                  <p className="inline-flex items-center gap-1.5">
+                    <Users className="text-muted size-3.5" aria-hidden />
+                    {getAssignedPlayerNames(session).length} assigned player
+                    {getAssignedPlayerNames(session).length === 1 ? "" : "s"}
+                  </p>
                   <p>
                     <span className="text-muted">Type:</span>{" "}
                     {session.session_type ?? "N/A"}
@@ -617,31 +647,47 @@ export function RegistersManager() {
                   </p>
                 </div>
 
-                <div className="mt-5">
-                  <label
-                    htmlFor={`register-${session.id}`}
-                    className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted"
-                  >
-                    Attendance status
-                  </label>
-                  <select
-                    id={`register-${session.id}`}
-                    value={session.attendance_status}
-                    disabled={updatingId === session.id}
-                    onChange={(e) =>
-                      void updateAttendanceStatus(
-                        session.id,
-                        e.target.value as AttendanceStatus,
-                      )
-                    }
-                    className="border-border bg-background text-foreground focus:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-70 dark:ring-offset-background"
-                  >
-                    {attendanceOptions.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
+                {getAssignedPlayerNames(session).length > 0 ? (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {getAssignedPlayerNames(session).map((name) => (
+                      <span
+                        key={`${session.id}-${name}`}
+                        className="rounded-full bg-black/[0.02] px-3 py-1 text-sm dark:bg-white/[0.03]"
+                      >
+                        {name}
+                      </span>
                     ))}
-                  </select>
+                  </div>
+                ) : null}
+
+                <div className="mt-5">
+                  <p className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
+                    Mark all assigned players
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {attendanceOptions.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        disabled={updatingId === session.id}
+                        onClick={() => void updateAttendanceStatus(session.id, status)}
+                        className={cn(
+                          "border-border hover:bg-black/[0.03] rounded-xl border px-3 py-2 text-sm font-medium capitalize transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]",
+                          session.attendance_status === status &&
+                            "bg-accent/10 text-accent ring-accent/20 border-accent/30 ring-1",
+                        )}
+                      >
+                        {updatingId === session.id && session.attendance_status === status ? (
+                          <span className="inline-flex items-center gap-2">
+                            <Loader2 className="size-4 animate-spin" aria-hidden />
+                            Saving
+                          </span>
+                        ) : (
+                          status
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </article>
             ))}
