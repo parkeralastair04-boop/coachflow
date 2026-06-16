@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { BILLING_PLANS } from "@/lib/billing";
-import { isFounder } from "@/lib/founders";
+import { hasComplimentaryAccess } from "@/lib/complimentary-access";
 import { getStripeServerClient } from "@/lib/stripe";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
@@ -16,17 +16,29 @@ export async function POST(request: Request) {
   try {
     const body = (await request.json()) as CheckoutRequestBody;
 
-    let sessionEmail: string | null = null;
+    let sessionUser: { email: string | null; metadata: Record<string, unknown> } | null =
+      null;
     if (supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
       const supabase = await createServerSupabaseClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      sessionEmail = user?.email ?? null;
+      if (user) {
+        sessionUser = {
+          email: user.email ?? null,
+          metadata: user.user_metadata ?? {},
+        };
+      }
     }
-    if (isFounder(sessionEmail) || isFounder(body.customerEmail)) {
+    if (
+      hasComplimentaryAccess({
+        email: sessionUser?.email ?? body.customerEmail,
+        metadata: sessionUser?.metadata,
+      }) ||
+      hasComplimentaryAccess({ email: body.customerEmail })
+    ) {
       return NextResponse.json(
-        { error: "You have complimentary founder access." },
+        { error: "You already have complimentary Academy access." },
         { status: 403 },
       );
     }
@@ -70,7 +82,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (sessionEmail && supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
+    if (sessionUser?.email && supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
       const supabase = await createServerSupabaseClient();
       const {
         data: { user },

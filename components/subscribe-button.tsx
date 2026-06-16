@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import type { PlanId } from "@/lib/billing";
-import { isFounder } from "@/lib/founders";
+import { readClientComplimentaryAccess } from "@/lib/complimentary-access-client";
 import { cn } from "@/lib/utils";
 
 type SubscribeButtonProps = {
@@ -33,21 +33,25 @@ export function SubscribeButton({
   const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [founderAccess, setFounderAccess] = useState(false);
+  const [complimentaryMessage, setComplimentaryMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!cancelled && user?.email && isFounder(user.email)) {
-          setFounderAccess(true);
+        const access = await readClientComplimentaryAccess(supabase);
+        if (!cancelled && access.hasComplimentaryAccess) {
+          if (access.isBetaTester) {
+            setComplimentaryMessage("Complimentary Academy Access");
+          } else if (access.isFounder) {
+            setComplimentaryMessage("You have complimentary founder access.");
+          } else {
+            setComplimentaryMessage("Complimentary Academy Access");
+          }
         }
       } catch {
-        if (!cancelled) setFounderAccess(false);
+        if (!cancelled) setComplimentaryMessage(null);
       }
     })();
     return () => {
@@ -91,7 +95,7 @@ export function SubscribeButton({
     }
   }
 
-  if (founderAccess) {
+  if (complimentaryMessage) {
     return (
       <p
         className={cn(
@@ -102,7 +106,7 @@ export function SubscribeButton({
           className,
         )}
       >
-        You have complimentary founder access.
+        {complimentaryMessage}
       </p>
     );
   }

@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Sparkles } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { isFounder } from "@/lib/founders";
+import { readClientComplimentaryAccess } from "@/lib/complimentary-access-client";
 
 export function DashboardHeader() {
   const [label, setLabel] = useState<string>("");
-  const [founder, setFounder] = useState(false);
+  const [showFounderBadge, setShowFounderBadge] = useState(false);
+  const [showBetaBadge, setShowBetaBadge] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -17,15 +19,19 @@ export function DashboardHeader() {
         const email = data.user?.email;
         if (!cancelled && email) {
           setLabel(email);
-          setFounder(isFounder(email));
+          const access = await readClientComplimentaryAccess(supabase);
+          setShowFounderBadge(access.isFounder);
+          setShowBetaBadge(access.isBetaTester);
         } else if (!cancelled) {
           setLabel("Coach");
-          setFounder(false);
+          setShowFounderBadge(false);
+          setShowBetaBadge(false);
         }
       } catch {
         if (!cancelled) {
           setLabel("");
-          setFounder(false);
+          setShowFounderBadge(false);
+          setShowBetaBadge(false);
         }
       }
     })();
@@ -38,9 +44,15 @@ export function DashboardHeader() {
     <div>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Dashboard</h1>
-        {founder ? (
+        {showFounderBadge ? (
           <span className="bg-accent/12 text-accent ring-accent/25 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1">
             Founder • Academy
+          </span>
+        ) : null}
+        {showBetaBadge ? (
+          <span className="bg-violet-500/12 text-violet-700 ring-violet-500/25 dark:text-violet-300 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1">
+            <Sparkles className="size-3.5" aria-hidden />
+            Beta Tester
           </span>
         ) : null}
       </div>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { isFounder } from "@/lib/founders";
+import { readClientComplimentaryAccess } from "@/lib/complimentary-access-client";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -20,21 +20,25 @@ function getErrorMessage(error: unknown): string {
 export function ManageBillingButton() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [founderAccess, setFounderAccess] = useState(false);
+  const [complimentaryMessage, setComplimentaryMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!cancelled && user?.email && isFounder(user.email)) {
-          setFounderAccess(true);
+        const access = await readClientComplimentaryAccess(supabase);
+        if (!cancelled && access.hasComplimentaryAccess) {
+          if (access.isBetaTester) {
+            setComplimentaryMessage("Complimentary Academy Access");
+          } else if (access.isFounder) {
+            setComplimentaryMessage("You have complimentary founder access.");
+          } else {
+            setComplimentaryMessage("Complimentary Academy Access");
+          }
         }
       } catch {
-        if (!cancelled) setFounderAccess(false);
+        if (!cancelled) setComplimentaryMessage(null);
       }
     })();
     return () => {
@@ -76,11 +80,9 @@ export function ManageBillingButton() {
     }
   }
 
-  if (founderAccess) {
+  if (complimentaryMessage) {
     return (
-      <p className="text-muted text-sm leading-relaxed">
-        You have complimentary founder access.
-      </p>
+      <p className="text-muted text-sm leading-relaxed">{complimentaryMessage}</p>
     );
   }
 

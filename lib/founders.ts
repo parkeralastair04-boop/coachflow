@@ -1,4 +1,5 @@
 import type { PlanId } from "@/lib/billing";
+import { getComplimentaryAccess } from "@/lib/complimentary-access";
 
 export const FOUNDER_EMAILS = ["parkeralastair04@gmail.com"] as const;
 
@@ -19,9 +20,12 @@ export type AccountBillingAccess = {
 /** Effective billing access for UI and gates. Founders always get Academy with active status. */
 export function getAccountBillingAccess(
   email: string | null | undefined,
+  metadata?: Record<string, unknown> | null,
 ): AccountBillingAccess {
-  if (isFounder(email)) {
-    return { plan: "academy", status: "active", isFounder: true };
-  }
-  return { plan: "starter", status: "inactive", isFounder: false };
+  const access = getComplimentaryAccess({ email, metadata });
+  return {
+    plan: access.plan,
+    status: access.status,
+    isFounder: access.isFounder,
+  };
 }

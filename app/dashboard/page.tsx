@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DashboardStats } from "@/components/dashboard-stats";
 import { DashboardHeader } from "@/components/dashboard-header";
+import { GettingStartedCard } from "@/components/getting-started-card";
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -10,6 +11,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-10">
       <DashboardHeader />
+      <GettingStartedCard />
       <DashboardStats />
 
       <section id="sessions" className="scroll-mt-24 space-y-4">

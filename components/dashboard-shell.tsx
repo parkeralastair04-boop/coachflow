@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
+import { OnboardingHost } from "@/components/onboarding-host";
 import type { AcademyBranding } from "@/lib/academy-shared";
 import type { FeatureKey } from "@/lib/subscription";
 import { Sidebar } from "@/components/sidebar";
@@ -73,6 +74,7 @@ export function DashboardShell({
       <div className="flex min-h-screen w-full min-w-0 flex-1 flex-col lg:pl-60">
         <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</main>
       </div>
+      <OnboardingHost />
     </div>
   );
 }

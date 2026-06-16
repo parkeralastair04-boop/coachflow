@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isFounder } from "@/lib/founders";
+import { hasComplimentaryAccess } from "@/lib/complimentary-access";
 import { getStripeServerClient } from "@/lib/stripe";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
@@ -21,17 +21,20 @@ export async function POST(request: Request) {
       );
     }
 
-    let sessionEmail: string | null = null;
+    let sessionMetadata: Record<string, unknown> | null = null;
     if (supabaseUrl?.trim() && supabaseAnonKey?.trim()) {
       const supabase = await createServerSupabaseClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      sessionEmail = user?.email ?? null;
+      sessionMetadata = user?.user_metadata ?? null;
     }
-    if (isFounder(customerEmail) || isFounder(sessionEmail)) {
+    if (
+      hasComplimentaryAccess({ email: customerEmail, metadata: sessionMetadata }) ||
+      hasComplimentaryAccess({ email: customerEmail })
+    ) {
       return NextResponse.json(
-        { error: "You have complimentary founder access." },
+        { error: "You already have complimentary Academy access." },
         { status: 403 },
       );
     }

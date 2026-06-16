@@ -1,5 +1,5 @@
 import type { PlanId } from "@/lib/billing";
-import { getAccountBillingAccess } from "@/lib/founders";
+import { getComplimentaryAccess } from "@/lib/complimentary-access";
 import {
   buildFeatureAccess,
   planMeetsMinimum,
@@ -16,11 +16,13 @@ export const FEATURE_ACCESS: Record<PlanId, readonly FeatureKey[]> = buildFeatur
 export type CurrentSubscription = {
   userId: string | null;
   email: string | null;
-  /** Declared plan from billing metadata or founder default. */
+  /** Declared plan from billing metadata or complimentary default. */
   plan: PlanId;
   status: "active" | "inactive";
   isFounder: boolean;
-  /** Plan used for feature checks (founders → academy; lapsed paid → starter-level access). */
+  isBetaTester: boolean;
+  hasComplimentaryAccess: boolean;
+  /** Plan used for feature checks (complimentary → academy; lapsed paid → starter-level access). */
   effectivePlan: PlanId;
 };
 
@@ -39,11 +41,11 @@ export function planHasFeature(plan: PlanId, featureKey: FeatureKey): boolean {
 }
 
 function computeEffectivePlan(args: {
-  isFounder: boolean;
+  hasComplimentaryAccess: boolean;
   declaredPlan: PlanId;
   status: "active" | "inactive";
 }): PlanId {
-  if (args.isFounder) return "academy";
+  if (args.hasComplimentaryAccess) return "academy";
   if (args.status !== "active") return "starter";
   return args.declaredPlan;
 }
@@ -51,6 +53,7 @@ function computeEffectivePlan(args: {
 /**
  * Reads the signed-in user from cookies and resolves subscription tier for gating.
  * Stripe webhooks (or admin) can set `user_metadata.subscription_plan` and `subscription_status`.
+ * Beta testers are flagged with `user_metadata.is_beta_tester`.
  */
 export async function getCurrentSubscription(): Promise<CurrentSubscription | null> {
   if (!supabaseUrl?.trim() || !supabaseAnonKey?.trim()) {
@@ -67,19 +70,22 @@ export async function getCurrentSubscription(): Promise<CurrentSubscription | nu
   }
 
   const email = user.email ?? null;
-  const founderAccess = getAccountBillingAccess(email);
+  const complimentary = getComplimentaryAccess({
+    email,
+    metadata: user.user_metadata,
+  });
 
   const metaPlanRaw = user.user_metadata?.subscription_plan;
   const declaredPlan: PlanId = isPlanId(metaPlanRaw)
     ? metaPlanRaw
-    : founderAccess.plan;
+    : complimentary.plan;
 
-  const status = founderAccess.isFounder
+  const status = complimentary.hasComplimentaryAccess
     ? ("active" as const)
     : parseMetadataStatus(user.user_metadata?.subscription_status);
 
   const effectivePlan = computeEffectivePlan({
-    isFounder: founderAccess.isFounder,
+    hasComplimentaryAccess: complimentary.hasComplimentaryAccess,
     declaredPlan,
     status,
   });
@@ -87,9 +93,11 @@ export async function getCurrentSubscription(): Promise<CurrentSubscription | nu
   return {
     userId: user.id,
     email,
-    plan: founderAccess.isFounder ? "academy" : declaredPlan,
-    status: founderAccess.isFounder ? "active" : status,
-    isFounder: founderAccess.isFounder,
+    plan: complimentary.hasComplimentaryAccess ? "academy" : declaredPlan,
+    status: complimentary.hasComplimentaryAccess ? "active" : status,
+    isFounder: complimentary.isFounder,
+    isBetaTester: complimentary.isBetaTester,
+    hasComplimentaryAccess: complimentary.hasComplimentaryAccess,
     effectivePlan,
   };
 }

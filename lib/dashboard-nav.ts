@@ -17,6 +17,7 @@ import {
   LifeBuoy,
   Palette,
   PoundSterling,
+  Settings,
   Tent,
   UserSquare2,
   Shield,
@@ -139,6 +140,11 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     title: "Settings & Help",
     icon: LifeBuoy,
     items: [
+      {
+        href: "/dashboard/settings/account",
+        label: "Account Settings",
+        icon: Settings,
+      },
       {
         href: "/dashboard/settings/notifications",
         label: "Notification Settings",
