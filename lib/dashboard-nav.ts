@@ -6,7 +6,6 @@ import {
   Brain,
   Building2,
   CalendarRange,
-  CalendarCheck,
   CalendarDays,
   ClipboardList,
   CreditCard,
@@ -14,9 +13,9 @@ import {
   Gift,
   HelpCircle,
   LayoutDashboard,
-  LifeBuoy,
   Palette,
   PoundSterling,
+  Rocket,
   Settings,
   Tent,
   UserSquare2,
@@ -47,7 +46,11 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     id: "overview",
     title: "Overview",
     icon: LayoutDashboard,
-    items: [{ href: "/dashboard", label: "Dashboard", icon: LayoutDashboard }],
+    items: [
+      { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { href: "/dashboard#getting-started", label: "Getting Started", icon: Rocket },
+      { href: "/dashboard/help", label: "Help & Support", icon: HelpCircle },
+    ],
   },
   {
     id: "coaching",
@@ -58,7 +61,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
       { href: "/dashboard/teams", label: "Teams", icon: Shield },
       {
         href: "/dashboard/availability",
-        label: "Availability",
+        label: "Booking & Availability",
         icon: CalendarRange,
         feature: "sessions",
       },
@@ -70,16 +73,16 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         feature: "group_registers",
       },
       { href: "/dashboard/camps", label: "Camps", icon: Tent, feature: "camps" },
-      { href: "/book", label: "Bookings", icon: CalendarCheck, external: true },
     ],
   },
   {
-    id: "ai-reports",
-    title: "AI & Reports",
+    id: "reports-insights",
+    title: "Reports & Insights",
     icon: Brain,
     items: [
       { href: "/dashboard/reports", label: "Reports", icon: FileText, feature: "reports" },
-      { href: "/dashboard/insights", label: "Insights", icon: Brain, feature: "insights" },
+      { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3, feature: "analytics" },
+      { href: "/dashboard/insights", label: "AI Insights", icon: Brain, feature: "insights" },
     ],
   },
   {
@@ -106,27 +109,31 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     title: "Payments & Growth",
     icon: PoundSterling,
     items: [
-      { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
       {
         href: "/dashboard/payments",
-        label: "Payments",
+        label: "Parent Payments",
         icon: Wallet,
         feature: "parent_payments",
-      },
-      {
-        href: "/dashboard/analytics",
-        label: "Analytics",
-        icon: BarChart3,
-        feature: "analytics",
       },
       { href: "/dashboard/referrals", label: "Referrals", icon: Gift, feature: "referrals" },
     ],
   },
   {
-    id: "academy",
-    title: "Academy",
-    icon: Building2,
+    id: "settings",
+    title: "Settings",
+    icon: Settings,
     items: [
+      {
+        href: "/dashboard/settings/account",
+        label: "Account",
+        icon: Settings,
+      },
+      { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
+      {
+        href: "/dashboard/settings/appearance",
+        label: "Appearance",
+        icon: Palette,
+      },
       {
         href: "/dashboard/academy",
         label: "Academy Settings",
@@ -135,64 +142,68 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
       },
     ],
   },
-  {
-    id: "settings-help",
-    title: "Settings & Help",
-    icon: LifeBuoy,
-    items: [
-      {
-        href: "/dashboard/settings/account",
-        label: "Account Settings",
-        icon: Settings,
-      },
-      {
-        href: "/dashboard/settings/notifications",
-        label: "Notification Settings",
-        icon: Bell,
-        feature: "push_notifications",
-      },
-      {
-        href: "/dashboard/settings/appearance",
-        label: "Appearance",
-        icon: Palette,
-      },
-      { href: "/dashboard/help", label: "Help & Support", icon: HelpCircle },
-    ],
-  },
 ];
 
-export const SIDEBAR_STORAGE_KEY = "coachflow:sidebar-sections";
+export const SIDEBAR_STORAGE_KEY = "coachflow:sidebar-sections:v2";
+
+const DEFAULT_EXPANDED_SECTIONS = new Set(["overview", "coaching", "settings"]);
 
 export function getPathBase(href: string): string {
   if (href.startsWith("mailto:") || href.startsWith("http")) return href;
   return href.split("#")[0] ?? href;
 }
 
-export function isNavItemActive(pathname: string, href: string): boolean {
+export function getPathHash(href: string): string | null {
+  const hash = href.split("#")[1];
+  return hash ? `#${hash}` : null;
+}
+
+export function normalizeUrlHash(hash: string): string {
+  if (!hash) return "";
+  return hash.startsWith("#") ? hash : `#${hash}`;
+}
+
+export function isNavItemActive(
+  pathname: string,
+  href: string,
+  currentHash = "",
+): boolean {
   const base = getPathBase(href);
+  const itemHash = getPathHash(href);
+  const normalizedHash = normalizeUrlHash(currentHash);
+
   if (base.startsWith("mailto:") || base.startsWith("http")) return false;
-  if (base === "/dashboard") return pathname === "/dashboard";
+  if (itemHash) {
+    return pathname === base && normalizedHash === itemHash;
+  }
+  if (base === "/dashboard") {
+    return pathname === "/dashboard" && !normalizedHash;
+  }
   return pathname === base || pathname.startsWith(`${base}/`);
 }
 
 export function findSectionIdForPath(
   pathname: string,
   sections: DashboardNavSection[] = DASHBOARD_NAV_SECTIONS,
+  currentHash = "",
 ): string | null {
   for (const section of sections) {
-    if (section.items.some((item) => isNavItemActive(pathname, item.href))) {
+    if (section.items.some((item) => isNavItemActive(pathname, item.href, currentHash))) {
       return section.id;
     }
   }
   return null;
 }
 
-export function getDefaultSectionState(pathname: string): Record<string, boolean> {
-  const activeId = findSectionIdForPath(pathname);
+export function getDefaultSectionState(
+  pathname: string,
+  currentHash = "",
+): Record<string, boolean> {
+  const activeId = findSectionIdForPath(pathname, DASHBOARD_NAV_SECTIONS, currentHash);
   return Object.fromEntries(
     DASHBOARD_NAV_SECTIONS.map((section) => [
       section.id,
-      section.id === activeId || section.id === "overview",
+      DEFAULT_EXPANDED_SECTIONS.has(section.id) || section.id === activeId,
     ]),
   );
 }

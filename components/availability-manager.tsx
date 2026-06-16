@@ -341,12 +341,84 @@ export function AvailabilityManager() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Availability</h1>
+        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+          Booking & Availability
+        </h1>
         <p className="text-muted mt-1 max-w-2xl text-sm">
-          Build reusable booking templates for your coaching week, then turn them
-          into live sessions with one click.
+          Share your booking portal, define weekly availability templates, and turn
+          them into live sessions with one click.
         </p>
       </div>
+
+      <section className="glass-panel sticky top-0 z-30 rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-accent text-xs font-medium tracking-wide uppercase">
+              Booking portal
+            </p>
+            <h2 className="mt-1 text-base font-semibold tracking-tight">Coach booking URL</h2>
+            <p className="text-muted mt-1 text-sm">
+              Share this link with parents to take bookings online.
+            </p>
+          </div>
+          {coachBookingUrl ? (
+            <div className="flex w-full shrink-0 flex-col gap-3 sm:max-w-xl sm:min-w-[18rem]">
+              <div className="border-border bg-background rounded-xl border px-3 py-3 text-sm">
+                <p className="break-all font-medium">{coachBookingUrl}</p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={() => void copyPortalUrl("coach", coachBookingUrl)}
+                  className="border-border hover:bg-black/[0.03] inline-flex h-10 flex-1 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors sm:flex-none dark:hover:bg-white/[0.06]"
+                >
+                  <Copy className="mr-2 size-4" aria-hidden />
+                  {copiedUrl === "coach" ? "Copied" : "Copy link"}
+                </button>
+                <a
+                  href={coachBookingUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="bg-foreground text-background hover:opacity-90 inline-flex h-10 flex-1 items-center justify-center rounded-full px-4 text-sm font-medium transition-opacity sm:flex-none"
+                >
+                  <ExternalLink className="mr-2 size-4" aria-hidden />
+                  Open portal
+                </a>
+              </div>
+            </div>
+          ) : (
+            <p className="text-muted text-sm sm:max-w-xs sm:text-right">
+              Your coach booking link will appear here once your public portal is ready.
+            </p>
+          )}
+        </div>
+
+        {academyBookingUrl ? (
+          <div className="border-border mt-5 border-t pt-5">
+            <p className="text-sm font-medium">Academy portal</p>
+            <p className="text-muted mt-1 break-all text-sm">{academyBookingUrl}</p>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void copyPortalUrl("academy", academyBookingUrl)}
+                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+              >
+                <Copy className="mr-2 size-4" aria-hidden />
+                {copiedUrl === "academy" ? "Copied" : "Copy link"}
+              </button>
+              <a
+                href={academyBookingUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition-opacity"
+              >
+                <ExternalLink className="mr-2 size-4" aria-hidden />
+                Open portal
+              </a>
+            </div>
+          </div>
+        ) : null}
+      </section>
 
       {setupTables.length > 0 ? (
         <SetupRequiredPanel
@@ -373,80 +445,31 @@ export function AvailabilityManager() {
               </div>
             </div>
 
-            <div className="mt-8 grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
-                  <p className="text-sm font-medium">Public or private sessions</p>
-                  <p className="text-muted mt-1 text-sm leading-relaxed">
-                    Choose exactly which sessions appear online and keep internal
-                    scheduling private.
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
-                  <p className="text-sm font-medium">Parents book online</p>
-                  <p className="text-muted mt-1 text-sm leading-relaxed">
-                    Families reserve sessions through your unique booking portal URL.
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
-                  <p className="text-sm font-medium">Recurring subscriptions</p>
-                  <p className="text-muted mt-1 text-sm leading-relaxed">
-                    Offer weekly coaching subscriptions alongside one-off bookings.
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
-                  <p className="text-sm font-medium">Automatic spaces and payments</p>
-                  <p className="text-muted mt-1 text-sm leading-relaxed">
-                    Capacity updates automatically and Stripe handles secure checkout.
-                  </p>
-                </div>
+            <div className="mt-8 grid gap-4 sm:grid-cols-2">
+              <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                <p className="text-sm font-medium">Public or private sessions</p>
+                <p className="text-muted mt-1 text-sm leading-relaxed">
+                  Choose exactly which sessions appear online and keep internal
+                  scheduling private.
+                </p>
               </div>
-
-              <div className="rounded-2xl bg-black/[0.02] p-5 dark:bg-white/[0.03]">
-                <p className="text-sm font-semibold tracking-tight">
-                  Coach booking URL
+              <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                <p className="text-sm font-medium">Parents book online</p>
+                <p className="text-muted mt-1 text-sm leading-relaxed">
+                  Families reserve sessions through your unique booking portal URL above.
                 </p>
-                <p className="text-muted mt-1 text-sm">
-                  Share this link with parents to start taking bookings.
+              </div>
+              <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                <p className="text-sm font-medium">Recurring subscriptions</p>
+                <p className="text-muted mt-1 text-sm leading-relaxed">
+                  Offer weekly coaching subscriptions alongside one-off bookings.
                 </p>
-
-                {coachBookingUrl ? (
-                  <div className="mt-4 space-y-3">
-                    <div className="rounded-xl border border-black/5 bg-background px-3 py-3 text-sm dark:border-white/10">
-                      <p className="break-all font-medium">{coachBookingUrl}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => void copyPortalUrl("coach", coachBookingUrl)}
-                        className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
-                      >
-                        <Copy className="mr-2 size-4" aria-hidden />
-                        {copiedUrl === "coach" ? "Copied" : "Copy link"}
-                      </button>
-                      <a
-                        href={coachBookingUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-4 text-sm font-medium transition-opacity"
-                      >
-                        <ExternalLink className="mr-2 size-4" aria-hidden />
-                        Open portal
-                      </a>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="mt-4 text-sm text-muted">
-                    Your coach booking link will appear here once your public portal is ready.
-                  </p>
-                )}
-
-                {academyBookingUrl ? (
-                  <div className="mt-5 border-t border-black/5 pt-5 dark:border-white/10">
-                    <p className="text-sm font-medium">Academy portal</p>
-                    <p className="text-muted mt-1 break-all text-sm">{academyBookingUrl}</p>
-                  </div>
-                ) : null}
+              </div>
+              <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                <p className="text-sm font-medium">Automatic spaces and payments</p>
+                <p className="text-muted mt-1 text-sm leading-relaxed">
+                  Capacity updates automatically and Stripe handles secure checkout.
+                </p>
               </div>
             </div>
           </section>

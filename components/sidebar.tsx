@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Lock, LogOut } from "lucide-react";
 import { BrandLogo } from "@/components/brand-logo";
 import {
@@ -55,6 +55,14 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const enabledSet = useMemo(() => new Set(enabledFeatures), [enabledFeatures]);
+  const [currentHash, setCurrentHash] = useState("");
+
+  useEffect(() => {
+    const syncHash = () => setCurrentHash(window.location.hash);
+    syncHash();
+    window.addEventListener("hashchange", syncHash);
+    return () => window.removeEventListener("hashchange", syncHash);
+  }, [pathname]);
 
   const [storedSections, setStoredSections] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") return {};
@@ -62,17 +70,17 @@ export function Sidebar({
   });
 
   const openSections = useMemo(() => {
-    const merged = { ...getDefaultSectionState(pathname), ...storedSections };
-    const activeSectionId = findSectionIdForPath(pathname);
+    const merged = { ...getDefaultSectionState(pathname, currentHash), ...storedSections };
+    const activeSectionId = findSectionIdForPath(pathname, DASHBOARD_NAV_SECTIONS, currentHash);
     if (activeSectionId) merged[activeSectionId] = true;
     return merged;
-  }, [pathname, storedSections]);
+  }, [pathname, currentHash, storedSections]);
 
   const toggleSection = useCallback(
     (sectionId: string) => {
       setStoredSections((prev) => {
-        const current = { ...getDefaultSectionState(pathname), ...prev };
-        const activeSectionId = findSectionIdForPath(pathname);
+        const current = { ...getDefaultSectionState(pathname, currentHash), ...prev };
+        const activeSectionId = findSectionIdForPath(pathname, DASHBOARD_NAV_SECTIONS, currentHash);
         if (activeSectionId) current[activeSectionId] = true;
 
         const nextStored = { ...prev, [sectionId]: !current[sectionId] };
@@ -85,7 +93,7 @@ export function Sidebar({
         return nextStored;
       });
     },
-    [pathname],
+    [pathname, currentHash],
   );
 
   function hasFeatureAccess(feature?: FeatureKey): boolean {
@@ -125,6 +133,7 @@ export function Sidebar({
               key={section.id}
               section={section}
               pathname={pathname}
+              currentHash={currentHash}
               isOpen={openSections[section.id] ?? false}
               onToggle={() => toggleSection(section.id)}
               hasFeatureAccess={hasFeatureAccess}
@@ -151,6 +160,7 @@ export function Sidebar({
 function NavSection({
   section,
   pathname,
+  currentHash,
   isOpen,
   onToggle,
   hasFeatureAccess,
@@ -158,13 +168,16 @@ function NavSection({
 }: {
   section: DashboardNavSection;
   pathname: string;
+  currentHash: string;
   isOpen: boolean;
   onToggle: () => void;
   hasFeatureAccess: (feature?: FeatureKey) => boolean;
   onNavigate?: () => void;
 }) {
   const SectionIcon = section.icon;
-  const sectionActive = section.items.some((item) => isNavItemActive(pathname, item.href));
+  const sectionActive = section.items.some((item) =>
+    isNavItemActive(pathname, item.href, currentHash),
+  );
 
   return (
     <li>
@@ -211,6 +224,7 @@ function NavSection({
             key={`${section.id}-${item.href}-${item.label}`}
             item={item}
             pathname={pathname}
+            currentHash={currentHash}
             locked={Boolean(item.feature && !hasFeatureAccess(item.feature))}
             onNavigate={onNavigate}
           />
@@ -223,16 +237,18 @@ function NavSection({
 function NavItemLink({
   item,
   pathname,
+  currentHash,
   locked,
   onNavigate,
 }: {
   item: DashboardNavItem;
   pathname: string;
+  currentHash: string;
   locked: boolean;
   onNavigate?: () => void;
 }) {
   const Icon = item.icon;
-  const active = isNavItemActive(pathname, item.href);
+  const active = isNavItemActive(pathname, item.href, currentHash);
 
   const className = cn(
     "flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors",
