@@ -126,7 +126,7 @@ export function GettingStartedCard() {
   if (!showCard) return null;
 
   return (
-    <section className="glass-panel relative overflow-hidden rounded-2xl">
+    <section id="getting-started" className="glass-panel relative scroll-mt-24 overflow-hidden rounded-2xl">
       <div className="from-accent/8 pointer-events-none absolute inset-0 bg-gradient-to-br via-transparent to-transparent opacity-80" />
       <div className="relative p-6 sm:p-8">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">

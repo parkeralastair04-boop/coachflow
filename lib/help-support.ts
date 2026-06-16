@@ -5,9 +5,30 @@ export const SUPPORT_WHATSAPP_E164 = "447818968712";
 
 export const SUPPORT_WHATSAPP_URL = `https://wa.me/${SUPPORT_WHATSAPP_E164}`;
 
-export const USER_GUIDE_URL = "https://coachflow.website/docs/user-guide";
-
 export const FEATURE_OVERVIEW_URL = "https://coachflow.website/#features";
+
+export const BUG_PRIORITIES = ["low", "medium", "high", "critical"] as const;
+export type BugPriority = (typeof BUG_PRIORITIES)[number];
+
+export const BUG_PAGE_FEATURES = [
+  "Players",
+  "Teams",
+  "Sessions",
+  "Registers",
+  "Attendance",
+  "Bookings",
+  "Payments",
+  "Reports",
+  "Analytics",
+  "Referrals",
+  "Automations",
+  "Availability",
+  "Camps",
+  "Billing",
+  "Account & Settings",
+  "Other",
+] as const;
+export type BugPageFeature = (typeof BUG_PAGE_FEATURES)[number];
 
 export function supportMailto(subject: string, body?: string): string {
   const params = new URLSearchParams({ subject });
@@ -15,40 +36,191 @@ export function supportMailto(subject: string, body?: string): string {
   return `mailto:${SUPPORT_EMAIL}?${params.toString()}`;
 }
 
-export const FAQ_ITEMS = [
+export const QUICK_START_STEPS = [
   {
-    question: "How do I add players?",
-    answer:
-      "Open Players under Coaching Operations, then use the add-player form with name, parent contact details, and optional notes. Every player is scoped to your coach account.",
+    step: 1,
+    title: "Name your academy",
+    description:
+      "Complete the onboarding wizard or open your dashboard checklist to set your business name and branding.",
   },
   {
-    question: "How do I generate AI reports?",
-    answer:
-      "Go to Reports, select a player, paste your session notes, and click generate. CoachFlow drafts a parent-ready summary you can edit before saving or sending.",
+    step: 2,
+    title: "Add players and teams",
+    description:
+      "Build your squad in Players, then group them into teams for registers and session planning.",
   },
   {
-    question: "How do I send reports to parents?",
-    answer:
-      "From Reports, generate or open a saved report, then use Send report. Ensure the player has a parent email on file — available on Pro and Academy plans.",
+    step: 3,
+    title: "Schedule sessions",
+    description:
+      "Create sessions from Sessions or set weekly Availability templates for recurring blocks.",
   },
   {
-    question: "How do I charge parents automatically?",
-    answer:
-      "Use Payments (Academy plan) to create Stripe checkout links and parent subscriptions. Parents complete payment once; renewals are handled by Stripe.",
+    step: 4,
+    title: "Share your booking link",
+    description:
+      "Copy your public booking URL from the dashboard checklist or Availability page so parents can book online.",
   },
   {
-    question: "How do I create camps?",
-    answer:
-      "Open Camps under Coaching Operations, fill in dates, capacity, pricing, and location, then publish. Enrolments and waitlists track from the camp dashboard.",
-  },
-  {
-    question: "How do I install the mobile app?",
-    answer:
-      "Open CoachFlow on your phone, then use the install prompt or Add to Home Screen in Safari or Chrome for a native-style mobile experience.",
-  },
-  {
-    question: "How do I upgrade my plan?",
-    answer:
-      "Visit Billing in the sidebar or open Pricing from the marketing site. Choose Starter, Pro, or Academy and complete checkout through Stripe.",
+    step: 5,
+    title: "Send your first report",
+    description:
+      "Paste session notes in Reports and generate a parent-ready summary — available on Starter and above.",
   },
 ] as const;
+
+export type UserGuideArticle = {
+  id: string;
+  title: string;
+  summary: string;
+  href: string;
+  steps: readonly string[];
+};
+
+export const USER_GUIDE_ARTICLES: readonly UserGuideArticle[] = [
+  {
+    id: "players",
+    title: "Players",
+    summary: "Manage your player CRM, parent contacts, and football profiles.",
+    href: "/dashboard/players",
+    steps: [
+      "Open Players under Coaching Operations in the sidebar.",
+      "Use the add-player form with at least a player name — parent email and phone are optional but recommended.",
+      "Add date of birth, preferred foot, and positions for squad planning and reports.",
+      "Search and filter your list as your academy grows; every player is scoped to your coach account.",
+    ],
+  },
+  {
+    id: "teams",
+    title: "Teams",
+    summary: "Organise squads with age groups, colours, and rosters.",
+    href: "/dashboard/teams",
+    steps: [
+      "Go to Teams and create a squad with a team name and optional age group.",
+      "Assign players to the team roster — useful for group registers and team-linked sessions.",
+      "Use team colours to distinguish squads in registers and on the dashboard.",
+      "Edit or archive teams as your programme structure changes across seasons.",
+    ],
+  },
+  {
+    id: "sessions",
+    title: "Sessions",
+    summary: "Schedule coaching blocks with pricing, capacity, and visibility.",
+    href: "/dashboard/sessions",
+    steps: [
+      "Open Sessions and choose date, time, session type, duration, and capacity.",
+      "Link a team or individual players when scheduling group or 1-to-1 blocks.",
+      "Set a price in pounds and toggle public visibility to allow parent bookings.",
+      "Track attendance status and notes from the session list as sessions are delivered.",
+    ],
+  },
+  {
+    id: "registers",
+    title: "Registers",
+    summary: "Run session registers with bulk attendance actions.",
+    href: "/dashboard/registers",
+    steps: [
+      "Open Registers to see upcoming sessions with linked players and teams.",
+      "Mark each player as attended, missed, or excused with optional per-player notes.",
+      "Use bulk actions to mark an entire squad present or absent quickly.",
+      "Registers work offline — changes sync when your connection returns.",
+    ],
+  },
+  {
+    id: "attendance",
+    title: "Attendance",
+    summary: "Track per-player attendance across sessions and squads.",
+    href: "/dashboard/registers",
+    steps: [
+      "Attendance is recorded at the player level inside Registers, not just per session.",
+      "Each mark updates the player's attendance history for analytics and parent reports.",
+      "Manual overrides are preserved when rosters are pre-filled from team assignments.",
+      "Review attendance trends from Analytics on Pro and Academy plans.",
+    ],
+  },
+  {
+    id: "bookings",
+    title: "Bookings",
+    summary: "Accept public session bookings and recurring subscriptions.",
+    href: "/dashboard/availability",
+    steps: [
+      "Set weekly Availability templates with public visibility to power your booking portal.",
+      "Share your coach or academy booking URL — parents book without emailing you.",
+      "Confirm new booking requests from the dashboard and manage recurring child subscriptions.",
+      "Upfront payment is the default flow for public session bookings.",
+    ],
+  },
+  {
+    id: "payments",
+    title: "Payments",
+    summary: "Collect fees from parents with Stripe checkout and subscriptions.",
+    href: "/dashboard/payments",
+    steps: [
+      "Open Payments (Pro and Academy) to create Stripe customers and checkout links per player.",
+      "Send parents a secure payment link for one-off fees or recurring coaching subscriptions.",
+      "Track subscription status, renewals, and failed payments from the payments dashboard.",
+      "Stripe handles card storage and renewals — CoachFlow stores subscription metadata only.",
+    ],
+  },
+  {
+    id: "reports",
+    title: "Reports",
+    summary: "Generate AI progress reports from your session notes.",
+    href: "/dashboard/reports",
+    steps: [
+      "Select a player in Reports and paste raw session notes from your coaching block.",
+      "Click generate to draft a structured, parent-ready progress summary.",
+      "Edit the draft before saving; saved reports appear in the player's history.",
+      "Email reports directly to parents on Pro and Academy plans.",
+    ],
+  },
+  {
+    id: "analytics",
+    title: "Analytics",
+    summary: "Monitor attendance, revenue, and academy growth metrics.",
+    href: "/dashboard/analytics",
+    steps: [
+      "Open Analytics (Pro and Academy) for attendance percentages and trends by player or team.",
+      "Review booking conversion, session volume, and subscription revenue snapshots.",
+      "Use insights to identify squads with dropping attendance or payment issues.",
+      "Export key figures for committee meetings or franchise reporting.",
+    ],
+  },
+  {
+    id: "referrals",
+    title: "Referrals",
+    summary: "Grow your academy with a personal referral link.",
+    href: "/dashboard/referrals",
+    steps: [
+      "Open Referrals to copy your unique invite link or send email invites.",
+      "When a referred coach signs up and converts to a paid plan, rewards are tracked automatically.",
+      "Share your link with coaching networks, partner clubs, or parent communities.",
+      "Referral status updates appear in your referrals dashboard.",
+    ],
+  },
+  {
+    id: "automations",
+    title: "Automations",
+    summary: "Send reminders and follow-ups automatically.",
+    href: "/dashboard/automations",
+    steps: [
+      "Open Automations (Pro and Academy) to configure email triggers for key events.",
+      "Set up session reminders, payment due notices, and welcome messages for new players.",
+      "Use template variables like parent name, player name, and session date in message bodies.",
+      "Run automations manually or on a schedule from the automations dashboard.",
+    ],
+  },
+] as const;
+
+export function getBugPriorityLabel(priority: BugPriority): string {
+  switch (priority) {
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "critical":
+      return "Critical";
+  }
+}
