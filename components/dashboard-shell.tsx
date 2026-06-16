@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { OnboardingHost } from "@/components/onboarding-host";
+import { ProductFeedbackWidget } from "@/components/product-feedback-widget";
 import type { AcademyBranding } from "@/lib/academy-shared";
 import type { FeatureKey } from "@/lib/subscription";
 import { Sidebar } from "@/components/sidebar";
@@ -75,6 +76,7 @@ export function DashboardShell({
         <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">{children}</main>
       </div>
       <OnboardingHost />
+      <ProductFeedbackWidget />
     </div>
   );
 }
