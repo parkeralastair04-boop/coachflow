@@ -1,18 +1,27 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   CalendarCheck,
+  Check,
+  Clock,
+  FileText,
+  HeartPulse,
   Loader2,
   MapPin,
   RotateCw,
   ShieldCheck,
   Users,
   WifiOff,
+  X,
 } from "lucide-react";
-import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
+import { FeaturePageHeader } from "@/components/feature-page-header";
+import { CoachSetupGuidance } from "@/components/coach-setup-guidance";
 import {
-  PLAYER_ATTENDANCE_STATUS_OPTIONS,
+  PRIMARY_ATTENDANCE_STATUS_OPTIONS,
+  SECONDARY_ATTENDANCE_STATUS_OPTIONS,
+  countMarkedPlayers,
   getAttendanceLabel,
   getAttendanceSummary,
   type PlayerAttendanceRow,
@@ -21,6 +30,7 @@ import {
 import { getTeamDisplayName, unwrapSingleRelation, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type SessionPlayerLink = {
   player_id: string;
@@ -97,6 +107,16 @@ type OfflineAttendanceChange = {
 
 type SyncState = "online" | "offline" | "syncing" | "synced";
 
+type SessionPeriod = "today" | "upcoming-this-week" | "later" | "previous";
+
+type SessionPeriodFilter = "all" | "today" | "this-week" | "previous";
+
+type SessionGroup = {
+  id: "today" | "upcoming-this-week" | "previous";
+  label: string;
+  sessions: RegisterSession[];
+};
+
 type RosterPlayer = {
   player_id: string;
   player_name: string;
@@ -131,10 +151,10 @@ const SESSION_SELECT = `
 const ATTENDANCE_SELECT =
   "id, coach_id, session_id, player_id, status, notes, recorded_at";
 
-const DB_NAME = "coachflow-registers-v2";
+const DB_NAME = "awarix-registers-v2";
 const DB_VERSION = 1;
 const STORE_NAME = "attendance_changes";
-const LOCAL_STORAGE_KEY = "coachflow:offline-player-attendance";
+const LOCAL_STORAGE_KEY = "awarix:offline-player-attendance";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -178,6 +198,132 @@ function getRegisterTitle(session: RegisterSession): string {
   if (team?.team_name?.trim()) return team.team_name;
   if (session.session_type?.trim()) return session.session_type;
   return "Untitled session";
+}
+
+function startOfLocalDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function endOfLocalDay(date: Date): Date {
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
+function startOfLocalWeek(date: Date): Date {
+  const day = startOfLocalDay(date);
+  const weekday = day.getDay();
+  const diff = weekday === 0 ? -6 : 1 - weekday;
+  day.setDate(day.getDate() + diff);
+  return day;
+}
+
+function endOfLocalWeek(date: Date): Date {
+  const start = startOfLocalWeek(date);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return endOfLocalDay(end);
+}
+
+function getSessionPeriod(sessionDate: string, now = new Date()): SessionPeriod {
+  const session = new Date(sessionDate);
+  if (Number.isNaN(session.getTime())) return "previous";
+
+  const todayStart = startOfLocalDay(now);
+  const todayEnd = endOfLocalDay(now);
+
+  if (session < todayStart) return "previous";
+  if (session <= todayEnd) return "today";
+
+  const weekEnd = endOfLocalWeek(now);
+  if (session <= weekEnd) return "upcoming-this-week";
+
+  return "later";
+}
+
+function isSessionInThisWeek(sessionDate: string, now = new Date()): boolean {
+  const session = new Date(sessionDate);
+  if (Number.isNaN(session.getTime())) return false;
+  return session >= startOfLocalWeek(now) && session <= endOfLocalWeek(now);
+}
+
+function sortSessionsAscending(left: RegisterSession, right: RegisterSession): number {
+  return new Date(left.session_date).getTime() - new Date(right.session_date).getTime();
+}
+
+function groupSessionsByPeriod(sessions: RegisterSession[]): SessionGroup[] {
+  const buckets: Record<SessionPeriod, RegisterSession[]> = {
+    today: [],
+    "upcoming-this-week": [],
+    later: [],
+    previous: [],
+  };
+
+  for (const session of sessions) {
+    buckets[getSessionPeriod(session.session_date)].push(session);
+  }
+
+  for (const bucket of Object.values(buckets)) {
+    bucket.sort(sortSessionsAscending);
+  }
+
+  const upcomingSessions = [
+    ...buckets["upcoming-this-week"],
+    ...buckets.later,
+  ].sort(sortSessionsAscending);
+
+  return [
+    { id: "today" as const, label: "Today", sessions: buckets.today },
+    {
+      id: "upcoming-this-week" as const,
+      label: "Upcoming this week",
+      sessions: upcomingSessions,
+    },
+    { id: "previous" as const, label: "Previous sessions", sessions: buckets.previous },
+  ].filter((group) => group.sessions.length > 0);
+}
+
+function filterSessionsByPeriod(
+  sessions: RegisterSession[],
+  filter: SessionPeriodFilter,
+): RegisterSession[] {
+  const now = new Date();
+
+  if (filter === "today") {
+    return sessions
+      .filter((session) => getSessionPeriod(session.session_date, now) === "today")
+      .sort(sortSessionsAscending);
+  }
+
+  if (filter === "this-week") {
+    return sessions
+      .filter((session) => isSessionInThisWeek(session.session_date, now))
+      .sort(sortSessionsAscending);
+  }
+
+  if (filter === "previous") {
+    return sessions
+      .filter((session) => getSessionPeriod(session.session_date, now) === "previous")
+      .sort(sortSessionsAscending);
+  }
+
+  return groupSessionsByPeriod(sessions).flatMap((group) => group.sessions);
+}
+
+function AttendanceStatusIcon({
+  status,
+  className,
+}: {
+  status: PlayerAttendanceStatus;
+  className?: string;
+}) {
+  if (status === "present") return <Check className={className} aria-hidden />;
+  if (status === "absent") return <X className={className} aria-hidden />;
+  if (status === "late") return <Clock className={className} aria-hidden />;
+  if (status === "injured") return <HeartPulse className={className} aria-hidden />;
+  return <FileText className={className} aria-hidden />;
 }
 
 function queueKey(coachId: string, sessionId: string, playerId: string): string {
@@ -436,28 +582,51 @@ function AttendanceStatusButton({
   active,
   disabled,
   onClick,
+  variant = "primary",
 }: {
   status: PlayerAttendanceStatus;
   active: boolean;
   disabled: boolean;
   onClick: () => void;
+  variant?: "primary" | "secondary";
 }) {
+  const isPrimary = variant === "primary";
+
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
-        "border-border hover:bg-black/[0.03] rounded-xl border px-3 py-2 text-xs font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]",
-        active && "bg-accent/10 text-accent border-accent/30 ring-accent/20 ring-1",
+        "focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center gap-1.5 rounded-xl border px-3 font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60",
+        isPrimary ? "text-sm" : "text-xs",
+        active
+          ? status === "present"
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-800 ring-1 ring-emerald-500/25 dark:text-emerald-200"
+            : status === "absent"
+              ? "border-red-500/40 bg-red-500/10 text-red-800 ring-1 ring-red-500/25 dark:text-red-200"
+              : status === "late"
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-800 ring-1 ring-amber-500/25 dark:text-amber-200"
+                : "bg-accent/10 text-accent border-accent/30 ring-accent/20 ring-1"
+          : "border-border hover:bg-surface-hover",
       )}
     >
+      <AttendanceStatusIcon
+        status={status}
+        className={cn(isPrimary ? "size-4" : "size-3.5")}
+      />
       {getAttendanceLabel(status)}
     </button>
   );
 }
 
 export function RegistersManager() {
+  const searchParams = useSearchParams();
+  const focusSessionId = searchParams.get("session")?.trim() ?? null;
+  const sessionCardRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const focusHandledRef = useRef<string | null>(null);
+
   const [coachId, setCoachId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerRow[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -466,6 +635,12 @@ export function RegistersManager() {
   const [attendanceRows, setAttendanceRows] = useState<AttendanceRow[]>([]);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [teamFilter, setTeamFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState<SessionPeriodFilter>("all");
+  const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+  const [loadAnnouncement, setLoadAnnouncement] = useState("");
+  const [bulkSuccessBySessionId, setBulkSuccessBySessionId] = useState<
+    Record<string, string>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -535,10 +710,25 @@ export function RegistersManager() {
   );
 
   const visibleSessions = useMemo(() => {
-    if (teamFilter === "all") return sessions;
-    if (teamFilter === "none") return sessions.filter((session) => !session.team_id);
-    return sessions.filter((session) => session.team_id === teamFilter);
-  }, [sessions, teamFilter]);
+    let filtered = sessions;
+    if (teamFilter === "none") {
+      filtered = sessions.filter((session) => !session.team_id);
+    } else if (teamFilter !== "all") {
+      filtered = sessions.filter((session) => session.team_id === teamFilter);
+    }
+    return filterSessionsByPeriod(filtered, periodFilter);
+  }, [periodFilter, sessions, teamFilter]);
+
+  const sessionGroups = useMemo(() => {
+    if (periodFilter !== "all") return [];
+    let filtered = sessions;
+    if (teamFilter === "none") {
+      filtered = sessions.filter((session) => !session.team_id);
+    } else if (teamFilter !== "all") {
+      filtered = sessions.filter((session) => session.team_id === teamFilter);
+    }
+    return groupSessionsByPeriod(filtered);
+  }, [periodFilter, sessions, teamFilter]);
 
   const refreshPendingCount = useCallback(async () => {
     const queued = await getQueuedChanges();
@@ -772,6 +962,31 @@ export function RegistersManager() {
     };
   }, [loadRegisters, syncQueuedChanges]);
 
+  useEffect(() => {
+    if (!focusSessionId || loading || error) return;
+    if (focusHandledRef.current === focusSessionId) return;
+
+    const session = sessions.find((item) => item.id === focusSessionId);
+    if (!session) return;
+
+    focusHandledRef.current = focusSessionId;
+
+    const frame = window.requestAnimationFrame(() => {
+      setPeriodFilter("all");
+      setFocusedSessionId(focusSessionId);
+      setLoadAnnouncement(`Register loaded for ${getRegisterTitle(session)}`);
+
+      const card = sessionCardRefs.current.get(focusSessionId);
+      card?.scrollIntoView({ behavior: "smooth", block: "start" });
+      const heading = card?.querySelector<HTMLElement>("[data-register-heading]");
+      heading?.focus({ preventScroll: true });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [error, focusSessionId, loading, sessions]);
+
   function setBusy(nextKeys: string[], active: boolean) {
     setBusyKeys((current) => {
       if (active) {
@@ -939,6 +1154,12 @@ export function RegistersManager() {
           recordedAt,
         });
       }
+      if (status === "present") {
+        setBulkSuccessBySessionId((current) => ({
+          ...current,
+          [session.id]: `✓ ${playerIds.length} player${playerIds.length === 1 ? "" : "s"} marked present`,
+        }));
+      }
       setSyncState("offline");
       return;
     }
@@ -960,6 +1181,12 @@ export function RegistersManager() {
       }
       await refreshPendingCount();
       setSyncState("synced");
+      if (status === "present") {
+        setBulkSuccessBySessionId((current) => ({
+          ...current,
+          [session.id]: `✓ ${playerIds.length} player${playerIds.length === 1 ? "" : "s"} marked present`,
+        }));
+      }
     } catch (caughtError: unknown) {
       for (const row of optimisticRows) {
         await queueAttendanceChange({
@@ -1003,26 +1230,289 @@ export function RegistersManager() {
 
   const activeSyncState: SyncState = !online ? "offline" : syncState;
 
-  return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              Player Registers
-            </h1>
-            <FeatureInfoTooltip featureKey="registers" />
+  const periodFilterOptions: Array<{ value: SessionPeriodFilter; label: string }> = [
+    { value: "all", label: "All" },
+    { value: "today", label: "Today" },
+    { value: "this-week", label: "This week" },
+    { value: "previous", label: "Previous" },
+  ];
+
+  function renderSessionCard(session: RegisterSession) {
+    const team = unwrapSingleRelation(session.team);
+    const roster = buildSessionRoster({
+      session,
+      playerNameById,
+      sessionBookings,
+      teamPlayersByTeamId,
+      teamOrderByPlayerId,
+      attendanceByKey,
+      noteDrafts,
+    });
+    const summary = getAttendanceSummary(
+      roster
+        .map((player) => player.attendance)
+        .filter((row): row is AttendanceRow => Boolean(row)),
+    );
+    const { marked, total } = countMarkedPlayers(roster);
+    const isFocused = focusedSessionId === session.id;
+
+    return (
+      <article
+        key={session.id}
+        ref={(node) => {
+          if (node) {
+            sessionCardRefs.current.set(session.id, node);
+          } else {
+            sessionCardRefs.current.delete(session.id);
+          }
+        }}
+        className={cn(
+          "football-panel football-panel-interactive rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6",
+          isFocused && "ring-accent/40 ring-2 ring-offset-2",
+        )}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3
+              data-register-heading
+              tabIndex={-1}
+              className="text-lg font-semibold tracking-tight outline-none focus-visible:ring-2 focus-visible:ring-accent/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              {getRegisterTitle(session)}
+            </h3>
+            <p className="text-muted mt-1 text-sm">
+              {formatSessionDate(session.session_date)}
+            </p>
           </div>
-          <p className="text-muted mt-1 text-sm">
-            Mark attendance for every player individually, apply bulk updates fast,
-            and keep everything syncing from the pitch.
+          {bulkUpdatingSessionId === session.id ? (
+            <span className="bg-accent/10 text-accent ring-accent/20 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1">
+              bulk updating
+            </span>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2 text-xs">
+          <span className="bg-accent/10 text-accent ring-accent/20 inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ring-1">
+            <Users className="size-3.5" aria-hidden />
+            {roster.length} rostered player{roster.length === 1 ? "" : "s"}
+          </span>
+          {team ? (
+            <span className="border-border text-muted inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-medium">
+              <span
+                className="inline-flex size-2.5 rounded-full"
+                style={{
+                  backgroundColor: team.team_color ?? "var(--color-accent)",
+                }}
+              />
+              {getTeamDisplayName(team)}
+            </span>
+          ) : null}
+          <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
+            {session.session_type ?? "Session"}
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+          <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+            <p className="text-muted text-xs">Present / late</p>
+            <p className="mt-1 font-medium">
+              {summary.present + summary.late} recorded
+            </p>
+          </div>
+          <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
+            <p className="text-muted text-xs">Absent / unavailable</p>
+            <p className="mt-1 font-medium">
+              {summary.absent + summary.injured + summary.excused} recorded
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2 text-sm">
+          <p className="inline-flex items-center gap-1.5">
+            <MapPin className="text-muted size-3.5" aria-hidden />
+            {session.location ?? "No location"}
           </p>
         </div>
-        <StatusIndicator state={activeSyncState} pendingCount={pendingCount} />
-      </div>
+
+        {total > 0 ? (
+          <p
+            role="status"
+            className="bg-background/95 text-foreground sticky top-0 z-10 -mx-5 mt-5 border-b border-black/[0.06] px-5 py-2.5 text-sm font-medium backdrop-blur sm:static sm:mx-0 sm:mt-4 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0 sm:backdrop-blur-none dark:border-white/[0.06]"
+          >
+            {marked} of {total} players marked
+          </p>
+        ) : null}
+
+        <div className="mt-5">
+          <button
+            type="button"
+            disabled={roster.length === 0 || bulkUpdatingSessionId === session.id}
+            onClick={() =>
+              void applyBulkAttendance(
+                session,
+                roster.map((player) => player.player_id),
+                "present",
+              )
+            }
+            className="bg-accent text-accent-foreground hover:bg-accent/90 focus-visible:ring-accent/40 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+          >
+            <Check className="size-4" aria-hidden />
+            Mark everyone present
+          </button>
+          {bulkSuccessBySessionId[session.id] ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="mt-2 text-sm font-medium text-emerald-700 dark:text-emerald-300"
+            >
+              {bulkSuccessBySessionId[session.id]}
+            </p>
+          ) : null}
+        </div>
+
+        <details className="mt-3">
+          <summary className="text-muted cursor-pointer text-xs font-medium">
+            More bulk actions
+          </summary>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {(["absent", "late", "injured", "excused"] as const).map((status) => (
+              <AttendanceStatusButton
+                key={`${session.id}-bulk-${status}`}
+                status={status}
+                active={false}
+                variant="secondary"
+                disabled={
+                  roster.length === 0 || bulkUpdatingSessionId === session.id
+                }
+                onClick={() =>
+                  void applyBulkAttendance(
+                    session,
+                    roster.map((player) => player.player_id),
+                    status,
+                  )
+                }
+              />
+            ))}
+          </div>
+        </details>
+
+        {roster.length > 0 ? (
+          <div className="mt-5 space-y-3">
+            {roster.map((player) => {
+              const key = queueKey(session.coach_id, session.id, player.player_id);
+              const activeStatus = player.attendance?.status ?? null;
+              const busy = busyKeys.includes(key);
+              const queued = queuedAttendanceKeys.includes(key);
+
+              return (
+                <div
+                  key={key}
+                  className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]"
+                >
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold">{player.player_name}</p>
+                        <p className="text-muted mt-1 text-xs">
+                          {activeStatus
+                            ? `${getAttendanceLabel(activeStatus)} · ${formatRecordedAt(
+                                player.attendance?.recorded_at ?? null,
+                              )}`
+                            : "Not marked yet"}
+                        </p>
+                      </div>
+                      {queued ? (
+                        <span className="bg-amber-500/10 text-amber-700 ring-amber-500/25 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 dark:text-amber-300">
+                          local queue
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      {PRIMARY_ATTENDANCE_STATUS_OPTIONS.map((status) => (
+                        <AttendanceStatusButton
+                          key={`${key}-${status}`}
+                          status={status}
+                          active={activeStatus === status}
+                          disabled={busy}
+                          variant="primary"
+                          onClick={() =>
+                            void applyAttendanceChange({
+                              sessionId: session.id,
+                              playerId: player.player_id,
+                              status,
+                              notes: noteDrafts[key] ?? "",
+                            })
+                          }
+                        />
+                      ))}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {SECONDARY_ATTENDANCE_STATUS_OPTIONS.map((status) => (
+                        <AttendanceStatusButton
+                          key={`${key}-${status}`}
+                          status={status}
+                          active={activeStatus === status}
+                          disabled={busy}
+                          variant="secondary"
+                          onClick={() =>
+                            void applyAttendanceChange({
+                              sessionId: session.id,
+                              playerId: player.player_id,
+                              status,
+                              notes: noteDrafts[key] ?? "",
+                            })
+                          }
+                        />
+                      ))}
+                    </div>
+
+                    <input
+                      value={noteDrafts[key] ?? ""}
+                      onChange={(event) =>
+                        setNoteDrafts((current) => ({
+                          ...current,
+                          [key]: event.target.value,
+                        }))
+                      }
+                      onBlur={() => void handleNoteBlur(session.id, player.player_id)}
+                      onFocus={(event) => {
+                        event.target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                      }}
+                      placeholder="Optional note, e.g. arrived after warm-up"
+                      aria-label={`Notes for ${player.player_name}`}
+                      disabled={busy}
+                      className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-5 rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
+            <p className="font-medium">No players in this register yet.</p>
+            <p className="text-muted mt-1">
+              Players are added from bookings, teams and assigned players.
+            </p>
+          </div>
+        )}
+      </article>
+    );
+  }
+
+  return (
+    <div className="page-content-enter space-y-8">
+      <FeaturePageHeader
+        featureKey="registers"
+        title="Session Registers"
+        subtitle="Mark attendance for every player individually, apply bulk updates fast, and keep everything syncing from the pitch."
+        actions={<StatusIndicator state={activeSyncState} pendingCount={pendingCount} />}
+      />
 
       {!online ? (
-        <div className="glass-panel border-amber-500/25 bg-amber-500/8 flex items-start gap-3 rounded-2xl p-5 text-sm ring-1 ring-amber-500/20">
+        <div className="football-panel border-amber-500/25 bg-amber-500/8 flex items-start gap-3 rounded-2xl p-5 text-sm ring-1 ring-amber-500/20">
           <WifiOff className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-300" />
           <div>
             <p className="font-semibold text-amber-800 dark:text-amber-200">
@@ -1036,10 +1526,10 @@ export function RegistersManager() {
         </div>
       ) : null}
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+            <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
               <ShieldCheck className="text-accent size-5" aria-hidden />
             </div>
             <div>
@@ -1056,7 +1546,7 @@ export function RegistersManager() {
             type="button"
             disabled={!online || syncState === "syncing" || pendingCount === 0}
             onClick={() => void syncQueuedChanges()}
-            className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
+            className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
           >
             {syncState === "syncing" ? (
               <>
@@ -1076,21 +1566,27 @@ export function RegistersManager() {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold tracking-tight">Session registers</h2>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             {teams.length > 0 ? (
-              <select
-                value={teamFilter}
-                onChange={(event) => setTeamFilter(event.target.value)}
-                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
-              >
-                <option value="all">All teams</option>
-                <option value="none">No linked team</option>
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {getTeamDisplayName(team)}
-                  </option>
-                ))}
-              </select>
+              <div className="min-w-0">
+                <label className="sr-only" htmlFor="registerTeamFilter">
+                  Filter by team
+                </label>
+                <select
+                  id="registerTeamFilter"
+                  value={teamFilter}
+                  onChange={(event) => setTeamFilter(event.target.value)}
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 sm:w-auto"
+                >
+                  <option value="all">All teams</option>
+                  <option value="none">No linked team</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {getTeamDisplayName(team)}
+                    </option>
+                  ))}
+                </select>
+              </div>
             ) : null}
             {!loading ? (
               <span className="text-muted text-sm">
@@ -1101,228 +1597,89 @@ export function RegistersManager() {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter sessions by date">
+          {periodFilterOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              aria-pressed={periodFilter === option.value}
+              onClick={() => setPeriodFilter(option.value)}
+              className={cn(
+                "focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                periodFilter === option.value
+                  ? "bg-accent/10 text-accent border-accent/30 ring-accent/20 ring-1"
+                  : "border-border hover:bg-surface-hover",
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="sr-only" role="status" aria-live="polite">
+          {loadAnnouncement}
+        </div>
+
         {error ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
+          <div className="football-panel football-panel-interactive rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
             {error}
           </div>
         ) : null}
 
         {actionError ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-amber-700 dark:text-amber-300">
+          <div
+            className="glass-panel break-words rounded-2xl p-6 text-sm text-amber-700 dark:text-amber-300"
+            role="alert"
+          >
             {actionError}
           </div>
         ) : null}
 
         {loading ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading registers...
-          </div>
+          <PanelSkeleton />
         ) : null}
 
-        {!loading && !error && visibleSessions.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-8 text-center">
+        {!loading && !error && sessions.length === 0 ? (
+          <CoachSetupGuidance
+            icon={CalendarCheck}
+            title="No sessions available."
+            description="No training sessions have been scheduled yet."
+            actionHref="/dashboard/sessions"
+            actionLabel="Create session"
+          />
+        ) : null}
+
+        {!loading && !error && sessions.length > 0 && visibleSessions.length === 0 ? (
+          <div className="football-panel football-panel-interactive rounded-2xl p-8 text-center">
             <CalendarCheck className="text-muted mx-auto size-8" aria-hidden />
-            <p className="mt-3 font-medium">No sessions to register</p>
-            <p className="text-muted mt-1 text-sm">
-              Schedule sessions first, then mark attendance player by player here.
+            <p className="mt-3 font-medium">No sessions in this date range</p>
+            <p className="text-muted mx-auto mt-2 max-w-md text-sm leading-relaxed">
+              Try another filter, or create a new session for the dates you need.
             </p>
           </div>
         ) : null}
 
-        {!loading && !error && visibleSessions.length > 0 ? (
-          <div className="grid gap-4 xl:grid-cols-2">
-            {visibleSessions.map((session) => {
-              const team = unwrapSingleRelation(session.team);
-              const roster = buildSessionRoster({
-                session,
-                playerNameById,
-                sessionBookings,
-                teamPlayersByTeamId,
-                teamOrderByPlayerId,
-                attendanceByKey,
-                noteDrafts,
-              });
-              const summary = getAttendanceSummary(
-                roster
-                  .map((player) => player.attendance)
-                  .filter((row): row is AttendanceRow => Boolean(row)),
-              );
-
-              return (
-                <article
-                  key={session.id}
-                  className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6"
+        {!loading && !error && visibleSessions.length > 0 && periodFilter === "all" ? (
+          <div className="page-content-enter space-y-8">
+            {sessionGroups.map((group) => (
+              <section key={group.id} aria-labelledby={`register-group-${group.id}`}>
+                <h3
+                  id={`register-group-${group.id}`}
+                  className="text-muted mb-4 text-sm font-semibold uppercase tracking-wide"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="text-lg font-semibold tracking-tight">
-                        {getRegisterTitle(session)}
-                      </h3>
-                      <p className="text-muted mt-1 text-sm">
-                        {formatSessionDate(session.session_date)}
-                      </p>
-                    </div>
-                    {bulkUpdatingSessionId === session.id ? (
-                      <span className="bg-accent/10 text-accent ring-accent/20 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1">
-                        bulk updating
-                      </span>
-                    ) : null}
-                  </div>
+                  {group.label}
+                </h3>
+                <div className="grid gap-4 xl:grid-cols-2">
+                  {group.sessions.map((session) => renderSessionCard(session))}
+                </div>
+              </section>
+            ))}
+          </div>
+        ) : null}
 
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                    <span className="bg-accent/10 text-accent ring-accent/20 inline-flex items-center gap-1 rounded-full px-2.5 py-1 font-medium ring-1">
-                      <Users className="size-3.5" aria-hidden />
-                      {roster.length} rostered player{roster.length === 1 ? "" : "s"}
-                    </span>
-                    {team ? (
-                      <span className="border-border text-muted inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-medium">
-                        <span
-                          className="inline-flex size-2.5 rounded-full"
-                          style={{
-                            backgroundColor:
-                              team.team_color ?? "var(--color-accent)",
-                          }}
-                        />
-                        {getTeamDisplayName(team)}
-                      </span>
-                    ) : null}
-                    <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 font-medium">
-                      {session.session_type ?? "Session"}
-                    </span>
-                  </div>
-
-                  <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
-                      <p className="text-muted text-xs">Present / late</p>
-                      <p className="mt-1 font-medium">
-                        {summary.present + summary.late} recorded
-                      </p>
-                    </div>
-                    <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
-                      <p className="text-muted text-xs">Absent / unavailable</p>
-                      <p className="mt-1 font-medium">
-                        {summary.absent + summary.injured + summary.excused} recorded
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 space-y-2 text-sm">
-                    <p className="inline-flex items-center gap-1.5">
-                      <MapPin className="text-muted size-3.5" aria-hidden />
-                      {session.location ?? "No location"}
-                    </p>
-                  </div>
-
-                  <div className="mt-5">
-                    <p className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted">
-                      Bulk actions
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                      {PLAYER_ATTENDANCE_STATUS_OPTIONS.map((status) => (
-                        <AttendanceStatusButton
-                          key={`${session.id}-${status}`}
-                          status={status}
-                          active={false}
-                          disabled={
-                            roster.length === 0 || bulkUpdatingSessionId === session.id
-                          }
-                          onClick={() =>
-                            void applyBulkAttendance(
-                              session,
-                              roster.map((player) => player.player_id),
-                              status,
-                            )
-                          }
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  {roster.length > 0 ? (
-                    <div className="mt-5 space-y-3">
-                      {roster.map((player) => {
-                        const key = queueKey(
-                          session.coach_id,
-                          session.id,
-                          player.player_id,
-                        );
-                        const activeStatus = player.attendance?.status ?? null;
-                        const busy = busyKeys.includes(key);
-                        const queued = queuedAttendanceKeys.includes(key);
-
-                        return (
-                          <div
-                            key={key}
-                            className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]"
-                          >
-                            <div className="flex flex-col gap-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="truncate font-semibold">
-                                    {player.player_name}
-                                  </p>
-                                  <p className="text-muted mt-1 text-xs">
-                                    {activeStatus
-                                      ? `${getAttendanceLabel(activeStatus)} · ${formatRecordedAt(
-                                          player.attendance?.recorded_at ?? null,
-                                        )}`
-                                      : "Not marked yet"}
-                                  </p>
-                                </div>
-                                {queued ? (
-                                  <span className="bg-amber-500/10 text-amber-700 ring-amber-500/25 rounded-full px-2.5 py-1 text-[11px] font-medium ring-1 dark:text-amber-300">
-                                    local queue
-                                  </span>
-                                ) : null}
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                                {PLAYER_ATTENDANCE_STATUS_OPTIONS.map((status) => (
-                                  <AttendanceStatusButton
-                                    key={`${key}-${status}`}
-                                    status={status}
-                                    active={activeStatus === status}
-                                    disabled={busy}
-                                    onClick={() =>
-                                      void applyAttendanceChange({
-                                        sessionId: session.id,
-                                        playerId: player.player_id,
-                                        status,
-                                        notes: noteDrafts[key] ?? "",
-                                      })
-                                    }
-                                  />
-                                ))}
-                              </div>
-
-                              <input
-                                value={noteDrafts[key] ?? ""}
-                                onChange={(event) =>
-                                  setNoteDrafts((current) => ({
-                                    ...current,
-                                    [key]: event.target.value,
-                                  }))
-                                }
-                                onBlur={() => void handleNoteBlur(session.id, player.player_id)}
-                                placeholder="Optional note, e.g. arrived after warm-up"
-                                disabled={busy}
-                                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="mt-5 rounded-2xl bg-black/[0.02] p-4 text-sm text-muted dark:bg-white/[0.03]">
-                      No rostered players yet. Link a team or assign players to this
-                      session first.
-                    </div>
-                  )}
-                </article>
-              );
-            })}
+        {!loading && !error && visibleSessions.length > 0 && periodFilter !== "all" ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {visibleSessions.map((session) => renderSessionCard(session))}
           </div>
         ) : null}
       </section>

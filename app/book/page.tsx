@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 export const metadata: Metadata = {
   title: "Book Football Coaching",
   description:
-    "Book live public football sessions and recurring coaching subscriptions through CoachFlow.",
+    "Book live public football sessions and recurring coaching subscriptions through Awarix.",
 };
 
 export default function BookPage() {
@@ -24,7 +24,7 @@ export default function BookPage() {
       <div className="glass-panel rounded-3xl p-8 sm:p-10">
         <h1 className="text-3xl font-semibold tracking-tight">Choose a booking portal</h1>
         <p className="text-muted mt-3 text-sm leading-relaxed">
-          CoachFlow booking portals are now tenant-specific. Open a coach route like
+          Awarix booking portals are now tenant-specific. Open a coach route like
           `/book/your-coach-slug` or an academy route like `/academy/your-academy-slug/book`.
         </p>
         <div className="mt-6">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,6 +13,8 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { BookingLinkGuidance } from "@/components/booking-link-guidance";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { SESSION_TYPE_OPTIONS } from "@/lib/booking-system";
 import {
   getDefaultSessionDateTime,
@@ -26,15 +28,15 @@ import {
   setOnboardingStep,
 } from "@/lib/onboarding-metadata";
 import {
-  createOnboardingPlayer,
   createOnboardingSession,
-  createOnboardingTeam,
   loadOnboardingCoachContext,
   resolveBookingPortalUrl,
   saveAcademyBusinessName,
   type OnboardingCoachContext,
 } from "@/lib/onboarding-setup";
+import { trackActivationEvent, markCelebrationSeen } from "@/lib/activation-client";
 import { createClient } from "@/lib/supabase";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
 import { cn } from "@/lib/utils";
 
 type OnboardingWizardProps = {
@@ -46,24 +48,14 @@ type OnboardingWizardProps = {
 };
 
 const STEP_LABELS = [
-  "Academy name",
-  "First player",
-  "First team",
+  "Name academy",
   "First session",
-  "Booking link",
-  "Complete",
+  "Share booking link",
+  "Ready to coach",
 ] as const;
 
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "Something went wrong. Please try again.";
+function scrollFocusedFieldIntoView(event: React.FocusEvent<HTMLElement>) {
+  event.target.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 export function OnboardingWizard({
@@ -81,12 +73,10 @@ export function OnboardingWizard({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   const [businessName, setBusinessName] = useState("");
-  const [playerName, setPlayerName] = useState("");
-  const [parentEmail, setParentEmail] = useState("");
-  const [teamName, setTeamName] = useState("");
-  const [ageGroup, setAgeGroup] = useState("");
   const [sessionDateTime, setSessionDateTime] = useState(getDefaultSessionDateTime);
   const [sessionType, setSessionType] = useState<string>("Group Session");
   const [sessionLocation, setSessionLocation] = useState("");
@@ -135,7 +125,7 @@ export function OnboardingWizard({
           }
         }
       } catch (caughtError: unknown) {
-        if (!cancelled) setError(getErrorMessage(caughtError));
+        if (!cancelled) setError(sanitizeDashboardSaveError(caughtError, { logLabel: "onboarding" }));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -154,15 +144,59 @@ export function OnboardingWizard({
       // Allow closing even if metadata update fails.
     }
     onClose();
+    window.requestAnimationFrame(() => {
+      previouslyFocusedRef.current?.focus();
+    });
   }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+
+    const focusDialog = () => {
+      const root = dialogRef.current;
+      if (!root) return;
+      const preferred = root.querySelector<HTMLElement>(
+        'input:not([disabled]), button:not([disabled]), [href], select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      (preferred ?? root).focus();
+    };
+    window.requestAnimationFrame(focusDialog);
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        event.preventDefault();
         void handlePause();
+        return;
+      }
+
+      if (event.key !== "Tab" || !dialogRef.current) return;
+
+      const focusable = [
+        ...dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((element) => !element.hasAttribute("disabled") && element.tabIndex !== -1);
+
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialogRef.current.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      if (event.shiftKey && (active === first || !dialogRef.current.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialogRef.current.contains(active))) {
+        event.preventDefault();
+        first.focus();
       }
     };
+
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, handlePause]);
@@ -191,7 +225,10 @@ export function OnboardingWizard({
   }
 
   async function handleStepContinue() {
-    if (!coachId) return;
+    if (!coachId) {
+      setError("You must be signed in to continue. Refresh and try again.");
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -205,40 +242,15 @@ export function OnboardingWizard({
           businessName,
         });
         setContext(updated);
+        await trackActivationEvent("academy_created");
+        await trackActivationEvent("booking_page_published");
+        await markCelebrationSeen(supabase, "academy_created");
         await goToStep(2);
         onProgressChange?.();
         return;
       }
 
       if (step === 2) {
-        if (playerName.trim()) {
-          await createOnboardingPlayer(supabase, {
-            coachId,
-            academyId: context?.academyId ?? null,
-            playerName,
-            parentEmail,
-          });
-          onProgressChange?.();
-        }
-        await goToStep(3);
-        return;
-      }
-
-      if (step === 3) {
-        if (teamName.trim()) {
-          await createOnboardingTeam(supabase, {
-            coachId,
-            academyId: context?.academyId ?? null,
-            teamName,
-            ageGroup,
-          });
-          onProgressChange?.();
-        }
-        await goToStep(4);
-        return;
-      }
-
-      if (step === 4) {
         if (sessionDateTime) {
           await createOnboardingSession(supabase, {
             coachId,
@@ -247,22 +259,24 @@ export function OnboardingWizard({
             sessionType,
             location: sessionLocation,
           });
+          await trackActivationEvent("first_session");
+          await markCelebrationSeen(supabase, "session_published");
           onProgressChange?.();
         }
         const refreshed = await loadOnboardingCoachContext(supabase, coachId);
         setContext(refreshed);
-        await goToStep(5);
+        await goToStep(3);
         return;
       }
 
-      if (step === 5) {
-        await goToStep(6);
+      if (step === 3) {
+        await goToStep(4);
         return;
       }
 
       await handleFinish();
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "onboarding" }));
     } finally {
       setSaving(false);
     }
@@ -271,7 +285,7 @@ export function OnboardingWizard({
   async function handleSkipStep() {
     if (step >= ONBOARDING_STEP_COUNT) return;
     const next = (step + 1) as OnboardingStepId;
-    if (step === 4 && coachId) {
+    if (step === 2 && coachId) {
       try {
         const supabase = createClient();
         const refreshed = await loadOnboardingCoachContext(supabase, coachId);
@@ -290,6 +304,8 @@ export function OnboardingWizard({
       setCopied(true);
       const supabase = createClient();
       await markBookingLinkShared(supabase);
+      await trackActivationEvent("booking_link_copied");
+      await markCelebrationSeen(supabase, "booking_link_copied");
       onProgressChange?.();
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -307,6 +323,7 @@ export function OnboardingWizard({
       role="presentation"
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-wizard-title"
@@ -315,10 +332,10 @@ export function OnboardingWizard({
         <div className="border-border flex items-center justify-between border-b px-5 py-4 sm:px-6">
           <div className="min-w-0">
             <p className="text-accent text-xs font-medium tracking-wide uppercase">
-              Getting started
+              Match-ready
             </p>
             <h2 id="onboarding-wizard-title" className="truncate text-lg font-semibold tracking-tight">
-              {step === 6 ? "You are all set" : `Step ${step} of ${ONBOARDING_STEP_COUNT}`}
+              {step === 4 ? "Ready for the pitch" : `Step ${step} of ${ONBOARDING_STEP_COUNT}`}
             </h2>
           </div>
           <button
@@ -332,7 +349,14 @@ export function OnboardingWizard({
         </div>
 
         <div className="px-5 pt-4 sm:px-6">
-          <div className="bg-muted/40 h-2 overflow-hidden rounded-full">
+          <div
+            className="bg-muted/40 h-2 overflow-hidden rounded-full"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progressPercent}
+            aria-label={`Onboarding progress: step ${step} of ${ONBOARDING_STEP_COUNT}`}
+          >
             <div
               className="bg-accent h-full rounded-full transition-all duration-500 ease-out"
               style={{ width: `${progressPercent}%` }}
@@ -347,10 +371,10 @@ export function OnboardingWizard({
           {loading ? (
             <div className="text-muted flex min-h-[220px] items-center justify-center gap-2 text-sm">
               <Loader2 className="size-4 animate-spin" aria-hidden />
-              Preparing your setup...
+              Preparing your academy...
             </div>
           ) : error && step !== 1 ? (
-            <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error}</p>
+            <FormErrorAlert message={error} className="mb-4" />
           ) : null}
 
           {!loading ? (
@@ -363,22 +387,6 @@ export function OnboardingWizard({
                 />
               ) : null}
               {step === 2 ? (
-                <StepFirstPlayer
-                  playerName={playerName}
-                  parentEmail={parentEmail}
-                  onPlayerNameChange={setPlayerName}
-                  onParentEmailChange={setParentEmail}
-                />
-              ) : null}
-              {step === 3 ? (
-                <StepFirstTeam
-                  teamName={teamName}
-                  ageGroup={ageGroup}
-                  onTeamNameChange={setTeamName}
-                  onAgeGroupChange={setAgeGroup}
-                />
-              ) : null}
-              {step === 4 ? (
                 <StepFirstSession
                   sessionDateTime={sessionDateTime}
                   sessionType={sessionType}
@@ -388,21 +396,23 @@ export function OnboardingWizard({
                   onSessionLocationChange={setSessionLocation}
                 />
               ) : null}
-              {step === 5 ? (
+              {step === 3 ? (
                 <StepBookingLink
                   bookingUrl={bookingUrl}
+                  coachSlug={context?.coachSlug ?? null}
+                  academySlug={context?.academySlug ?? null}
                   copied={copied}
                   onCopy={() => void handleCopyBookingUrl()}
                 />
               ) : null}
-              {step === 6 ? <StepComplete businessName={businessName} /> : null}
+              {step === 4 ? <StepComplete businessName={businessName} /> : null}
             </>
           ) : null}
         </div>
 
         <div className="border-border flex flex-col gap-3 border-t px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex gap-2">
-            {step > 1 && step < 6 ? (
+            {step > 1 && step < 4 ? (
               <button
                 type="button"
                 onClick={() => void goToStep((step - 1) as OnboardingStepId)}
@@ -416,7 +426,7 @@ export function OnboardingWizard({
               <button
                 type="button"
                 onClick={() => void handlePause()}
-                className="text-muted hover:text-foreground text-sm font-medium transition-colors"
+                className="text-muted hover:text-foreground inline-flex h-11 items-center justify-center px-4 text-sm font-medium transition-colors"
               >
                 Continue later
               </button>
@@ -424,14 +434,14 @@ export function OnboardingWizard({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            {step > 1 && step < 6 ? (
+            {step > 1 && step < 4 ? (
               <button
                 type="button"
                 onClick={() => void handleSkipStep()}
                 disabled={saving}
                 className="text-muted hover:text-foreground inline-flex h-11 items-center justify-center px-4 text-sm font-medium transition-colors disabled:opacity-60"
               >
-                Skip this step
+                Skip for now
               </button>
             ) : null}
             <button
@@ -445,9 +455,9 @@ export function OnboardingWizard({
                   <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
                   Saving...
                 </>
-              ) : step === 6 ? (
+              ) : step === 4 ? (
                 <>
-                  Go to dashboard
+                  Go to my dashboard
                   <ArrowRight className="ml-2 size-4" aria-hidden />
                 </>
               ) : (
@@ -480,9 +490,10 @@ function StepAcademyName({
           <Sparkles className="text-accent size-5" aria-hidden />
         </div>
         <div>
-          <h3 className="text-base font-semibold tracking-tight">Name your academy or business</h3>
+          <h3 className="text-base font-semibold tracking-tight">Name your club or academy</h3>
           <p className="text-muted mt-1 text-sm leading-relaxed">
-            This appears on your dashboard, reports, and public booking page.
+            This is the name parents see on your booking page, session confirmations, and progress reports.
+            It also creates your unique booking link.
           </p>
         </div>
       </div>
@@ -492,100 +503,13 @@ function StepAcademyName({
           type="text"
           value={businessName}
           onChange={(event) => onBusinessNameChange(event.target.value)}
+          onFocus={scrollFocusedFieldIntoView}
           placeholder="e.g. Riverside Football Academy"
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
           autoFocus
         />
       </label>
-      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-    </div>
-  );
-}
-
-function StepFirstPlayer({
-  playerName,
-  parentEmail,
-  onPlayerNameChange,
-  onParentEmailChange,
-}: {
-  playerName: string;
-  parentEmail: string;
-  onPlayerNameChange: (value: string) => void;
-  onParentEmailChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-base font-semibold tracking-tight">Add your first player</h3>
-        <p className="text-muted mt-1 text-sm leading-relaxed">
-          Start building your squad. You can add more details later in Player CRM.
-        </p>
-      </div>
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Player name</span>
-        <input
-          type="text"
-          value={playerName}
-          onChange={(event) => onPlayerNameChange(event.target.value)}
-          placeholder="e.g. Jamie Smith"
-          className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
-          autoFocus
-        />
-      </label>
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Parent email (optional)</span>
-        <input
-          type="email"
-          value={parentEmail}
-          onChange={(event) => onParentEmailChange(event.target.value)}
-          placeholder="parent@example.com"
-          className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
-        />
-      </label>
-    </div>
-  );
-}
-
-function StepFirstTeam({
-  teamName,
-  ageGroup,
-  onTeamNameChange,
-  onAgeGroupChange,
-}: {
-  teamName: string;
-  ageGroup: string;
-  onTeamNameChange: (value: string) => void;
-  onAgeGroupChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-base font-semibold tracking-tight">Create your first team</h3>
-        <p className="text-muted mt-1 text-sm leading-relaxed">
-          Organise players into squads for registers, sessions, and reports.
-        </p>
-      </div>
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Team name</span>
-        <input
-          type="text"
-          value={teamName}
-          onChange={(event) => onTeamNameChange(event.target.value)}
-          placeholder="e.g. U12 Development"
-          className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
-          autoFocus
-        />
-      </label>
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Age group (optional)</span>
-        <input
-          type="text"
-          value={ageGroup}
-          onChange={(event) => onAgeGroupChange(event.target.value)}
-          placeholder="e.g. U12"
-          className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
-        />
-      </label>
+      {error ? <FormErrorAlert message={error} /> : null}
     </div>
   );
 }
@@ -608,17 +532,21 @@ function StepFirstSession({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold tracking-tight">Schedule your first session</h3>
+        <h3 className="text-base font-semibold tracking-tight">Publish your first session</h3>
         <p className="text-muted mt-1 text-sm leading-relaxed">
-          Create a public session parents can discover through your booking portal.
+          This creates a bookable training slot on your parent portal — for example a 1-to-1, skills group, or trial session.
         </p>
       </div>
+      <p className="rounded-xl bg-black/[0.02] px-3 py-2 text-xs text-muted dark:bg-white/[0.03]">
+        Optional step: skip if you prefer to build sessions from the Sessions page later. Without a session, your booking link will look empty to parents.
+      </p>
       <label className="block space-y-2">
         <span className="text-sm font-medium">Date & time</span>
         <input
           type="datetime-local"
           value={sessionDateTime}
           onChange={(event) => onSessionDateTimeChange(event.target.value)}
+          onFocus={scrollFocusedFieldIntoView}
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
         />
       </label>
@@ -627,6 +555,7 @@ function StepFirstSession({
         <select
           value={sessionType}
           onChange={(event) => onSessionTypeChange(event.target.value)}
+          onFocus={scrollFocusedFieldIntoView}
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
         >
           {SESSION_TYPE_OPTIONS.map((option) => (
@@ -642,6 +571,7 @@ function StepFirstSession({
           type="text"
           value={sessionLocation}
           onChange={(event) => onSessionLocationChange(event.target.value)}
+          onFocus={scrollFocusedFieldIntoView}
           placeholder="e.g. Pitch A, Riverside Sports Centre"
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
         />
@@ -652,24 +582,28 @@ function StepFirstSession({
 
 function StepBookingLink({
   bookingUrl,
+  coachSlug,
+  academySlug,
   copied,
   onCopy,
 }: {
   bookingUrl: string | null;
+  coachSlug: string | null;
+  academySlug: string | null;
   copied: boolean;
   onCopy: () => void;
 }) {
   return (
     <div className="space-y-4">
       <div>
-        <h3 className="text-base font-semibold tracking-tight">Share your booking portal</h3>
+        <h3 className="text-base font-semibold tracking-tight">Share your booking link with parents</h3>
         <p className="text-muted mt-1 text-sm leading-relaxed">
-          Parents can book sessions and trials through this public link.
+          Send your link on WhatsApp or email. Parents pick a session, enter their child&apos;s details, and book without you chasing replies.
         </p>
       </div>
       {bookingUrl ? (
         <div className="border-border bg-background/60 rounded-2xl border p-4">
-          <p className="text-muted text-xs font-medium tracking-wide uppercase">Public URL</p>
+          <p className="text-muted text-xs font-medium tracking-wide uppercase">Link to share</p>
           <p className="mt-2 break-all text-sm font-medium">{bookingUrl}</p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <button
@@ -701,15 +635,21 @@ function StepBookingLink({
               className="border-border hover:bg-surface-hover inline-flex h-11 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors"
             >
               <ExternalLink className="mr-2 size-4" aria-hidden />
-              Preview
+              Open booking page
             </a>
           </div>
         </div>
       ) : (
         <p className="text-muted text-sm">
-          Complete the academy name step to generate your booking link.
+          Complete the club name step to generate your booking link.
         </p>
       )}
+      <BookingLinkGuidance
+        coachSlug={coachSlug}
+        academySlug={academySlug}
+        primaryUrl={bookingUrl}
+        variant="full"
+      />
     </div>
   );
 }
@@ -721,27 +661,27 @@ function StepComplete({ businessName }: { businessName: string }) {
         <PartyPopper className="text-accent size-8" aria-hidden />
       </div>
       <div>
-        <h3 className="text-xl font-semibold tracking-tight">Welcome to CoachFlow</h3>
+        <h3 className="text-xl font-semibold tracking-tight">You&apos;re match-ready</h3>
         <p className="text-muted mt-2 text-sm leading-relaxed">
           {businessName.trim()
-            ? `${businessName} is ready to go. Explore your dashboard, invite parents, and start coaching.`
-            : "Your coaching workspace is ready. Explore your dashboard and start building your academy."}
+            ? `${businessName} is ready. Share your booking link with parents, then return to your dashboard whenever you need to manage training.`
+            : "Your academy is ready. Share your booking link with parents, then use your dashboard to manage training."}
         </p>
       </div>
       <div className="border-border text-muted rounded-2xl border p-4 text-left text-sm">
-        <p className="text-foreground font-medium">What is next?</p>
+        <p className="text-foreground font-medium">Your quickest path to the first booking</p>
         <ul className="mt-2 space-y-2">
           <li className="flex items-start gap-2">
             <CheckCircle2 className="text-accent mt-0.5 size-4 shrink-0" aria-hidden />
-            Add more players and teams from the sidebar
-          </li>
-          <li className="flex items-start gap-2">
-            <CheckCircle2 className="text-accent mt-0.5 size-4 shrink-0" aria-hidden />
-            Set weekly availability for recurring bookings
-          </li>
-          <li className="flex items-start gap-2">
-            <CheckCircle2 className="text-accent mt-0.5 size-4 shrink-0" aria-hidden />
             Share your booking link with parents
+          </li>
+          <li className="flex items-start gap-2">
+            <CheckCircle2 className="text-accent mt-0.5 size-4 shrink-0" aria-hidden />
+            Add players later when you need registers — optional for your first booking
+          </li>
+          <li className="flex items-start gap-2">
+            <CheckCircle2 className="text-accent mt-0.5 size-4 shrink-0" aria-hidden />
+            Explore development reports, squads, and finance once parents start booking
           </li>
         </ul>
       </div>

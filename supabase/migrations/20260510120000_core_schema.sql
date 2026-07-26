@@ -1,4 +1,4 @@
--- Core CoachFlow CRM tables (players, sessions, progress reports).
+-- Core Awarix CRM tables (players, sessions, progress reports).
 -- Sessions use session_date (timestamptz) for the scheduled date and time.
 
 create table if not exists public.players (

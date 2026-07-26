@@ -1,0 +1,5 @@
+-- Wave 1 migrations (run in order in Supabase SQL Editor):
+--   1. supabase/migrations/20260610120000_security_audit_log.sql
+--   2. supabase/migrations/20260610130000_stripe_webhook_events.sql
+--
+-- After apply, run: npm run verify:wave1

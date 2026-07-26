@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CalendarClock,
+  ClipboardList,
   Eye,
   EyeOff,
   Loader2,
@@ -13,7 +14,11 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { SessionAttendanceSummary } from "@/components/attendance-display";
+import { EmptyState } from "@/components/empty-state";
+import { footballEmptyPreset } from "@/lib/football-identity";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { PlayerMultiSelect } from "@/components/player-multi-select";
 import {
   getDayLabel,
@@ -24,8 +29,21 @@ import {
   type SessionBookingRow,
 } from "@/lib/booking-system";
 import { summarizeSessionBookings } from "@/lib/session-booking-state";
+import {
+  BOOKING_STATUS_HELPER_COPY,
+  getBookingDisplayStatus,
+} from "@/lib/session-booking-display";
 import { getTeamDisplayName, unwrapSingleRelation, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { MIN_CAPACITY, MIN_DURATION_MINUTES } from "@/lib/validation/constants";
+import {
+  getSessionPresentRate,
+  type PlayerAttendanceStatus,
+} from "@/lib/attendance";
+import { buildSessionRosterPlayerIds } from "@/lib/session-roster";
+import { replaceSessionPlayers } from "@/lib/session-players";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type AttendanceStatus = "scheduled" | "attended" | "missed" | "cancelled";
 
@@ -68,8 +86,24 @@ type SessionRow = {
 
 type SessionBookingSummary = Pick<
   SessionBookingRow,
-  "id" | "session_id" | "booking_status" | "payment_status" | "amount" | "expires_at"
->;
+  | "id"
+  | "session_id"
+  | "booking_status"
+  | "payment_status"
+  | "amount"
+  | "expires_at"
+  | "parent_name"
+  | "parent_email"
+  | "player_id"
+> & {
+  player: { player_name: string }[] | { player_name: string } | null;
+};
+
+type SessionAttendanceRow = {
+  session_id: string;
+  player_id: string;
+  status: PlayerAttendanceStatus;
+};
 
 type SessionFormState = {
   availabilityTemplateId: string;
@@ -85,6 +119,13 @@ type SessionFormState = {
   capacity: string;
   visibility: "public" | "private";
   bookingEnabled: boolean;
+};
+
+type SessionFieldErrors = {
+  sessionDateTime?: string;
+  sessionType?: string;
+  durationMinutes?: string;
+  capacity?: string;
 };
 
 const SESSION_SELECT = `
@@ -136,25 +177,6 @@ const defaultFormState: SessionFormState = {
   visibility: "private",
   bookingEnabled: false,
 };
-
-const attendanceOptions: AttendanceStatus[] = [
-  "scheduled",
-  "attended",
-  "missed",
-  "cancelled",
-];
-
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
-}
 
 function formatSessionDate(value: string): string {
   const parsed = new Date(value);
@@ -220,6 +242,24 @@ function sortSessions(a: SessionRow, b: SessionRow) {
   return new Date(b.session_date).getTime() - new Date(a.session_date).getTime();
 }
 
+function getBookingPlayerName(booking: SessionBookingSummary): string {
+  const player = unwrapSingleRelation(booking.player);
+  return player?.player_name ?? booking.parent_name ?? "Parent booking";
+}
+
+function getBookingBadgeClass(tone: ReturnType<typeof getBookingDisplayStatus>["tone"]): string {
+  switch (tone) {
+    case "confirmed":
+      return "bg-accent/10 text-accent ring-accent/20";
+    case "pending":
+      return "bg-amber-500/10 text-amber-700 ring-amber-500/20 dark:text-amber-300";
+    case "waitlist":
+      return "bg-black/[0.04] text-muted ring-black/[0.08] dark:bg-white/[0.05] dark:ring-white/[0.08]";
+    default:
+      return "border-border text-muted border";
+  }
+}
+
 export function SessionsManager() {
   const [coachId, setCoachId] = useState<string | null>(null);
   const [academyId, setAcademyId] = useState<string | null>(null);
@@ -227,19 +267,28 @@ export function SessionsManager() {
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [availabilityTemplates, setAvailabilityTemplates] = useState<CoachAvailabilityRow[]>([]);
   const [sessionBookings, setSessionBookings] = useState<SessionBookingSummary[]>([]);
+  const [sessionAttendance, setSessionAttendance] = useState<SessionAttendanceRow[]>([]);
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [form, setForm] = useState<SessionFormState>(defaultFormState);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<SessionFieldErrors>({});
 
   const playerNameById = useMemo(
     () => new Map(players.map((player) => [player.id, player.player_name])),
     [players],
+  );
+
+  const pendingPaymentCount = useMemo(
+    () =>
+      sessionBookings.filter(
+        (booking) => getBookingDisplayStatus(booking).label === "Waiting for payment",
+      ).length,
+    [sessionBookings],
   );
 
   const templateById = useMemo(
@@ -251,6 +300,27 @@ export function SessionsManager() {
     () => new Map(teams.map((team) => [team.id, team])),
     [teams],
   );
+
+  const teamPlayerIdsByTeamId = useMemo(
+    () =>
+      new Map(
+        teams.map((team) => [
+          team.id,
+          (team.team_players ?? []).map((membership) => membership.player_id),
+        ]),
+      ),
+    [teams],
+  );
+
+  const attendanceBySessionId = useMemo(() => {
+    const grouped = new Map<string, SessionAttendanceRow[]>();
+    for (const row of sessionAttendance) {
+      const current = grouped.get(row.session_id) ?? [];
+      current.push(row);
+      grouped.set(row.session_id, current);
+    }
+    return grouped;
+  }, [sessionAttendance]);
 
   const loadCoachData = useCallback(async (userId: string) => {
     setLoading(true);
@@ -264,6 +334,7 @@ export function SessionsManager() {
         { data: sessionsData, error: sessionsError },
         { data: availabilityData, error: availabilityError },
         { data: bookingsData, error: bookingsError },
+        { data: attendanceData, error: attendanceError },
       ] = await Promise.all([
         supabase
           .from("players")
@@ -290,18 +361,27 @@ export function SessionsManager() {
           .order("start_time", { ascending: true }),
         supabase
           .from("session_bookings")
-          .select("id, session_id, booking_status, payment_status, amount, expires_at")
+          .select(
+            "id, session_id, booking_status, payment_status, amount, expires_at, parent_name, parent_email, player_id, player:players(player_name)",
+          )
+          .eq("coach_id", userId),
+        supabase
+          .from("session_attendance")
+          .select("session_id, player_id, status")
           .eq("coach_id", userId),
       ]);
 
-      if (playersError || teamsError || sessionsError || availabilityError || bookingsError) {
+      if (playersError || teamsError || sessionsError || availabilityError || bookingsError || attendanceError) {
         setError(
-          playersError?.message ??
-            teamsError?.message ??
-            sessionsError?.message ??
-            availabilityError?.message ??
-            bookingsError?.message ??
-            "Could not load sessions.",
+          sanitizeDashboardSaveError(
+            playersError ??
+              teamsError ??
+              sessionsError ??
+              availabilityError ??
+              bookingsError ??
+              attendanceError,
+            { logLabel: "sessions-load" },
+          ),
         );
         return;
       }
@@ -311,8 +391,9 @@ export function SessionsManager() {
       setSessions(((sessionsData ?? []) as SessionRow[]).sort(sortSessions));
       setAvailabilityTemplates((availabilityData ?? []) as CoachAvailabilityRow[]);
       setSessionBookings((bookingsData ?? []) as SessionBookingSummary[]);
+      setSessionAttendance((attendanceData ?? []) as SessionAttendanceRow[]);
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "sessions-load" }));
     } finally {
       setLoading(false);
     }
@@ -350,7 +431,7 @@ export function SessionsManager() {
 
         if (cancelled) return;
         if (userError) {
-          setError(userError.message);
+          setError(sanitizeDashboardSaveError(userError, { logLabel: "sessions-auth" }));
           setLoading(false);
           return;
         }
@@ -375,7 +456,7 @@ export function SessionsManager() {
         await loadCoachData(user.id);
       } catch (caughtError: unknown) {
         if (!cancelled) {
-          setError(getErrorMessage(caughtError));
+          setError(sanitizeDashboardSaveError(caughtError, { logLabel: "sessions-load" }));
           setLoading(false);
         }
       }
@@ -411,6 +492,7 @@ export function SessionsManager() {
     setEditingSessionId(null);
     setForm(defaultFormState);
     setSubmitError(null);
+    setFieldErrors({});
   }
 
   function handleTeamChange(teamId: string) {
@@ -427,6 +509,7 @@ export function SessionsManager() {
   function startEditing(session: SessionRow) {
     setEditingSessionId(session.id);
     setSubmitError(null);
+    setFieldErrors({});
     setForm({
       availabilityTemplateId: session.source_availability_id ?? "",
       teamId: session.team_id ?? "",
@@ -447,28 +530,7 @@ export function SessionsManager() {
 
   async function saveSessionPlayers(sessionId: string, playerIds: string[]) {
     const supabase = createClient();
-
-    const { error: deleteError } = await supabase
-      .from("session_players")
-      .delete()
-      .eq("session_id", sessionId);
-
-    if (deleteError) {
-      throw deleteError;
-    }
-
-    if (playerIds.length === 0) return;
-
-    const { error: insertError } = await supabase.from("session_players").insert(
-      playerIds.map((playerId) => ({
-        session_id: sessionId,
-        player_id: playerId,
-      })),
-    );
-
-    if (insertError) {
-      throw insertError;
-    }
+    await replaceSessionPlayers(supabase, sessionId, playerIds);
   }
 
   async function handleSubmitSession(event: React.FormEvent<HTMLFormElement>) {
@@ -478,26 +540,30 @@ export function SessionsManager() {
       setSubmitError("You must be signed in to schedule sessions.");
       return;
     }
+
+    const nextFieldErrors: SessionFieldErrors = {};
     if (!form.sessionDateTime) {
-      setSubmitError("Please provide session date and time.");
-      return;
+      nextFieldErrors.sessionDateTime = "Session date and time is required.";
     }
     if (!form.sessionType.trim()) {
-      setSubmitError("Please choose a session type.");
-      return;
+      nextFieldErrors.sessionType = "Session type is required.";
     }
 
     const durationMinutes = Number.parseInt(form.durationMinutes, 10);
     const capacity = Number.parseInt(form.capacity, 10);
-    if (!Number.isFinite(durationMinutes) || durationMinutes < 15) {
-      setSubmitError("Duration must be at least 15 minutes.");
-      return;
+    if (!Number.isFinite(durationMinutes) || durationMinutes < MIN_DURATION_MINUTES) {
+      nextFieldErrors.durationMinutes = `Duration must be at least ${MIN_DURATION_MINUTES} minutes.`;
     }
-    if (!Number.isFinite(capacity) || capacity < 1) {
-      setSubmitError("Capacity must be at least 1.");
+    if (!Number.isFinite(capacity) || capacity < MIN_CAPACITY) {
+      nextFieldErrors.capacity = `Capacity must be at least ${MIN_CAPACITY}.`;
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
       return;
     }
 
+    setFieldErrors({});
     setSubmitError(null);
     setSaving(true);
 
@@ -531,7 +597,7 @@ export function SessionsManager() {
           .eq("coach_id", coachId);
 
         if (updateError) {
-          setSubmitError(updateError.message);
+          setSubmitError(sanitizeDashboardSaveError(updateError, { logLabel: "sessions-save" }));
           return;
         }
 
@@ -555,7 +621,7 @@ export function SessionsManager() {
         .single();
 
       if (insertError || !created) {
-        setSubmitError(insertError?.message ?? "Could not create the session.");
+        setSubmitError(sanitizeDashboardSaveError(insertError, { logLabel: "sessions-save" }));
         return;
       }
 
@@ -576,45 +642,12 @@ export function SessionsManager() {
         location: current.location,
       }));
     } catch (caughtError: unknown) {
-      setSubmitError(getErrorMessage(caughtError));
+      setSubmitError(sanitizeDashboardSaveError(caughtError, { logLabel: "sessions-save" }));
       if (editingSessionId) {
         await loadCoachData(coachId);
       }
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function updateAttendanceStatus(sessionId: string, nextStatus: AttendanceStatus) {
-    if (!coachId) {
-      setSubmitError("You must be signed in to update attendance.");
-      return;
-    }
-
-    setSubmitError(null);
-    setStatusUpdatingId(sessionId);
-    try {
-      const supabase = createClient();
-      const { error: updateError } = await supabase
-        .from("sessions")
-        .update({ attendance_status: nextStatus })
-        .eq("id", sessionId)
-        .eq("coach_id", coachId);
-
-      if (updateError) {
-        setSubmitError(updateError.message);
-        return;
-      }
-
-      setSessions((current) =>
-        current.map((session) =>
-          session.id === sessionId ? { ...session, attendance_status: nextStatus } : session,
-        ),
-      );
-    } catch (caughtError: unknown) {
-      setSubmitError(getErrorMessage(caughtError));
-    } finally {
-      setStatusUpdatingId(null);
     }
   }
 
@@ -635,7 +668,7 @@ export function SessionsManager() {
         .eq("coach_id", coachId);
 
       if (deleteError) {
-        setSubmitError(deleteError.message);
+        setSubmitError(sanitizeDashboardSaveError(deleteError, { logLabel: "sessions-delete" }));
         return;
       }
 
@@ -645,21 +678,24 @@ export function SessionsManager() {
         resetForm();
       }
     } catch (caughtError: unknown) {
-      setSubmitError(getErrorMessage(caughtError));
+      setSubmitError(sanitizeDashboardSaveError(caughtError, { logLabel: "sessions-save" }));
     } finally {
       setDeletingId(null);
     }
   }
 
   return (
-    <div className="space-y-8">
+    <div className="page-content-enter space-y-8">
       <FeaturePageHeader
         featureKey="sessions"
-        title="Session Scheduling"
-        subtitle="Create sessions from availability templates, override price or capacity, and publish bookable slots without losing manual internal control."
+        title="Training Sessions"
+        subtitle="Schedule sessions from availability templates, set capacity and pricing, and publish bookable slots for parents."
       />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section
+        id="create-session"
+        className="football-panel football-panel-interactive scroll-mt-24 rounded-2xl p-5 sm:p-6"
+      >
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
@@ -674,7 +710,7 @@ export function SessionsManager() {
             <button
               type="button"
               onClick={resetForm}
-              className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+              className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
             >
               <X className="size-4" aria-hidden />
               Cancel edit
@@ -691,7 +727,7 @@ export function SessionsManager() {
               id="availabilityTemplate"
               value={form.availabilityTemplateId}
               onChange={(event) => applyTemplate(event.target.value)}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             >
               <option value="">Create without a template</option>
               {availabilityTemplates.map((template) => (
@@ -715,7 +751,7 @@ export function SessionsManager() {
               id="sessionTeam"
               value={form.teamId}
               onChange={(event) => handleTeamChange(event.target.value)}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             >
               <option value="">No linked team</option>
               {teams.map((team) => (
@@ -755,41 +791,71 @@ export function SessionsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, groupName: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. Elite Finishing Group"
             />
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="sessionDateTime">
-              Session date and time
+              Session date <span className="text-red-500">*</span>
             </label>
             <input
               id="sessionDateTime"
               type="datetime-local"
               required
               value={form.sessionDateTime}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, sessionDateTime: event.target.value }))
+              onChange={(event) => {
+                setForm((current) => ({ ...current, sessionDateTime: event.target.value }));
+                if (fieldErrors.sessionDateTime) {
+                  setFieldErrors((current) => ({ ...current, sessionDateTime: undefined }));
+                }
+              }}
+              aria-invalid={fieldErrors.sessionDateTime ? true : undefined}
+              aria-describedby={
+                fieldErrors.sessionDateTime ? "sessionDateTime-error" : undefined
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             />
+            {fieldErrors.sessionDateTime ? (
+              <p
+                id="sessionDateTime-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.sessionDateTime}
+              </p>
+            ) : null}
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="sessionType">
-              Session type
+              Session type <span className="text-red-500">*</span>
             </label>
             <input
               id="sessionType"
               required
               value={form.sessionType}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, sessionType: event.target.value }))
-              }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              onChange={(event) => {
+                setForm((current) => ({ ...current, sessionType: event.target.value }));
+                if (fieldErrors.sessionType) {
+                  setFieldErrors((current) => ({ ...current, sessionType: undefined }));
+                }
+              }}
+              aria-invalid={fieldErrors.sessionType ? true : undefined}
+              aria-describedby={fieldErrors.sessionType ? "sessionType-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="1-to-1, Group Session, Camp"
             />
+            {fieldErrors.sessionType ? (
+              <p
+                id="sessionType-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.sessionType}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -802,26 +868,42 @@ export function SessionsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, location: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. Pitch A"
             />
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="durationMinutes">
-              Duration (mins)
+              Duration <span className="text-red-500">*</span>
             </label>
             <input
               id="durationMinutes"
               type="number"
-              min={15}
-              step={15}
+              min={MIN_DURATION_MINUTES}
+              step={MIN_DURATION_MINUTES}
               value={form.durationMinutes}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, durationMinutes: event.target.value }))
+              onChange={(event) => {
+                setForm((current) => ({ ...current, durationMinutes: event.target.value }));
+                if (fieldErrors.durationMinutes) {
+                  setFieldErrors((current) => ({ ...current, durationMinutes: undefined }));
+                }
+              }}
+              aria-invalid={fieldErrors.durationMinutes ? true : undefined}
+              aria-describedby={
+                fieldErrors.durationMinutes ? "durationMinutes-error" : undefined
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             />
+            {fieldErrors.durationMinutes ? (
+              <p
+                id="durationMinutes-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.durationMinutes}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -844,18 +926,32 @@ export function SessionsManager() {
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="sessionCapacity">
-              Capacity
+              Capacity <span className="text-red-500">*</span>
             </label>
             <input
               id="sessionCapacity"
               type="number"
-              min={1}
+              min={MIN_CAPACITY}
               value={form.capacity}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, capacity: event.target.value }))
-              }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              onChange={(event) => {
+                setForm((current) => ({ ...current, capacity: event.target.value }));
+                if (fieldErrors.capacity) {
+                  setFieldErrors((current) => ({ ...current, capacity: undefined }));
+                }
+              }}
+              aria-invalid={fieldErrors.capacity ? true : undefined}
+              aria-describedby={fieldErrors.capacity ? "sessionCapacity-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             />
+            {fieldErrors.capacity ? (
+              <p
+                id="sessionCapacity-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.capacity}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -873,7 +969,7 @@ export function SessionsManager() {
                     event.target.value === "public" ? current.bookingEnabled : false,
                 }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             >
               <option value="private">Private / internal only</option>
               <option value="public">Publicly bookable</option>
@@ -894,7 +990,7 @@ export function SessionsManager() {
                 }))
               }
               disabled={form.visibility !== "public"}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-60"
             >
               <option value="enabled">Booking enabled</option>
               <option value="disabled">Booking paused</option>
@@ -911,15 +1007,13 @@ export function SessionsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, notes: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="Training focus, prep notes, or parent-facing details..."
             />
           </div>
 
           {submitError ? (
-            <p className="sm:col-span-2 text-sm text-red-600 dark:text-red-400">
-              {submitError}
-            </p>
+            <FormErrorAlert message={submitError} className="sm:col-span-2" />
           ) : null}
 
           <div className="sm:col-span-2 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -936,7 +1030,7 @@ export function SessionsManager() {
               ) : editingSessionId ? (
                 "Save session"
               ) : (
-                "Create session"
+                "Create Session"
               )}
             </button>
             <p className="text-muted text-sm">
@@ -953,27 +1047,42 @@ export function SessionsManager() {
           {!loading ? <span className="text-muted text-sm">{sessions.length} total</span> : null}
         </div>
 
-        {error ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-            {error}
+        {error ? <FormErrorAlert message={error} /> : null}
+
+        {!loading && pendingPaymentCount > 0 ? (
+          <div
+            className="football-panel football-panel-interactive rounded-2xl p-5 text-sm"
+            role="status"
+            aria-live="polite"
+          >
+            <p className="font-medium">Families still completing payment</p>
+            <p className="text-muted mt-1 leading-relaxed">
+              {pendingPaymentCount === 1
+                ? "1 place is temporarily reserved while a parent finishes checkout."
+                : `${pendingPaymentCount} places are temporarily reserved while parents finish checkout.`}
+            </p>
+            <p className="text-muted mt-2 leading-relaxed">{BOOKING_STATUS_HELPER_COPY}</p>
           </div>
         ) : null}
 
         {loading ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading sessions...
-          </div>
+          <PanelSkeleton />
         ) : null}
 
         {!loading && !error && sessions.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-8 text-center">
-            <CalendarClock className="text-muted mx-auto size-8" aria-hidden />
-            <p className="mt-3 font-medium">No sessions yet</p>
-            <p className="text-muted mt-1 text-sm">
-              Create your first bookable slot or internal session to start taking bookings.
-            </p>
-          </div>
+          <EmptyState
+            {...footballEmptyPreset("sessions")}
+            actionLabel="Create your first session"
+            onAction={() => {
+              document.getElementById("create-session")?.scrollIntoView({
+                behavior: "smooth",
+                block: "start",
+              });
+              window.requestAnimationFrame(() => {
+                document.getElementById("sessionDateTime")?.focus();
+              });
+            }}
+          />
         ) : null}
 
         {!loading && !error && sessions.length > 0 ? (
@@ -981,15 +1090,36 @@ export function SessionsManager() {
             {sessions.map((session) => {
               const assignedNames = getAssignedPlayerNames(session, playerNameById);
               const assignedCount = assignedNames.length;
-              const bookingStats = summarizeSessionBookings(
-                sessionBookings.filter((booking) => booking.session_id === session.id),
-                session.capacity,
+              const sessionBookingRows = sessionBookings.filter(
+                (booking) => booking.session_id === session.id,
               );
+              const bookingStats = summarizeSessionBookings(sessionBookingRows, session.capacity);
               const remainingSpaces = bookingStats.remainingSpaces;
               const team = unwrapSingleRelation(session.team);
+              const activeBookings = sessionBookingRows.filter((booking) => {
+                const display = getBookingDisplayStatus(booking);
+                return display.label !== "Payment expired" && display.label !== "Cancelled";
+              });
+              const rosterPlayerIds = buildSessionRosterPlayerIds({
+                session,
+                sessionBookings: sessionBookingRows,
+                teamPlayerIdsByTeamId,
+              });
+              const sessionAttendanceRows = attendanceBySessionId.get(session.id) ?? [];
+              const markedCount = rosterPlayerIds.filter((playerId) =>
+                sessionAttendanceRows.some((row) => row.player_id === playerId),
+              ).length;
+              const presentRate = getSessionPresentRate(
+                rosterPlayerIds,
+                sessionAttendanceRows,
+              );
+              const absentCount = sessionAttendanceRows.filter(
+                (row) =>
+                  rosterPlayerIds.includes(row.player_id) && row.status === "absent",
+              ).length;
 
               return (
-                <article key={session.id} className="glass-panel rounded-2xl p-5 sm:p-6">
+                <article key={session.id} className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className="truncate text-lg font-semibold tracking-tight">
@@ -1066,6 +1196,16 @@ export function SessionsManager() {
                         {session.booking_enabled ? "Booking live" : "Booking paused"}
                       </span>
                     ) : null}
+                    {bookingStats.pending > 0 ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2.5 py-1 font-medium text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300">
+                        {bookingStats.pending} awaiting payment
+                      </span>
+                    ) : null}
+                    {bookingStats.confirmed > 0 ? (
+                      <span className="bg-accent/10 text-accent ring-accent/20 inline-flex rounded-full px-2.5 py-1 font-medium ring-1">
+                        {bookingStats.confirmed} confirmed
+                      </span>
+                    ) : null}
                   </div>
 
                   {assignedNames.length > 0 ? (
@@ -1080,6 +1220,42 @@ export function SessionsManager() {
                       ))}
                     </div>
                   ) : null}
+
+                  <SessionAttendanceSummary
+                    sessionId={session.id}
+                    marked={markedCount}
+                    total={rosterPlayerIds.length}
+                    presentRate={presentRate}
+                    absentCount={absentCount}
+                  />
+
+                  <div className="border-border mt-4 flex flex-wrap gap-2 border-t pt-4">
+                    <button
+                      type="button"
+                      onClick={() => startEditing(session)}
+                      className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex h-11 items-center justify-center rounded-xl border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
+                    >
+                      Edit session
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        document
+                          .getElementById(`session-bookings-${session.id}`)
+                          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                      }}
+                      className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex h-11 items-center justify-center rounded-xl border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
+                    >
+                      View bookings
+                    </button>
+                    <Link
+                      href={`/dashboard/registers?session=${session.id}`}
+                      className="bg-accent text-accent-foreground hover:bg-accent/90 focus-visible:ring-accent/40 inline-flex h-11 items-center justify-center rounded-xl px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                      <ClipboardList className="mr-2 size-4" aria-hidden />
+                      Take register
+                    </Link>
+                  </div>
 
                   <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
                     <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
@@ -1097,7 +1273,11 @@ export function SessionsManager() {
                     <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
                       <p className="text-muted text-xs">Bookings</p>
                       <p className="mt-1 font-medium">
-                        {bookingStats.confirmed} confirmed · {bookingStats.waitlist} waitlist
+                        {bookingStats.confirmed} confirmed
+                        {bookingStats.pending > 0
+                          ? ` · ${bookingStats.pending} awaiting payment`
+                          : ""}
+                        {bookingStats.waitlist > 0 ? ` · ${bookingStats.waitlist} waitlist` : ""}
                       </p>
                     </div>
                     <div className="rounded-xl bg-black/[0.02] px-3 py-2.5 dark:bg-white/[0.03]">
@@ -1108,38 +1288,43 @@ export function SessionsManager() {
                     </div>
                   </div>
 
+                  {activeBookings.length > 0 ? (
+                    <div className="mt-4 space-y-2" id={`session-bookings-${session.id}`}>
+                      <p className="text-muted text-xs font-medium uppercase tracking-wide">
+                        Parent bookings
+                      </p>
+                      <ul className="space-y-2">
+                        {activeBookings.map((booking) => {
+                          const display = getBookingDisplayStatus(booking);
+                          return (
+                            <li
+                              key={booking.id}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-black/[0.02] px-3 py-2.5 text-sm dark:bg-white/[0.03]"
+                            >
+                              <div className="min-w-0">
+                                <p className="font-medium">{getBookingPlayerName(booking)}</p>
+                                <p className="text-muted truncate text-xs">
+                                  {booking.parent_email}
+                                </p>
+                              </div>
+                              <span
+                                className={`inline-flex shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${getBookingBadgeClass(display.tone)}`}
+                                title={display.description}
+                              >
+                                {display.label}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ) : null}
+
                   <div className="mt-4 space-y-2 text-sm">
                     <p className="inline-flex items-center gap-1.5">
                       <MapPin className="text-muted size-3.5" aria-hidden />
                       {session.location ?? "No location"}
                     </p>
-                  </div>
-
-                  <div className="mt-4">
-                    <label
-                      htmlFor={`attendance-${session.id}`}
-                      className="mb-2 block text-xs font-medium uppercase tracking-wide text-muted"
-                    >
-                      Attendance status
-                    </label>
-                    <select
-                      id={`attendance-${session.id}`}
-                      value={session.attendance_status}
-                      disabled={statusUpdatingId === session.id}
-                      onChange={(event) =>
-                        void updateAttendanceStatus(
-                          session.id,
-                          event.target.value as AttendanceStatus,
-                        )
-                      }
-                      className="border-border bg-background text-foreground focus:ring-accent/40 h-10 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-70"
-                    >
-                      {attendanceOptions.map((status) => (
-                        <option key={status} value={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
                   </div>
 
                   {session.notes ? (

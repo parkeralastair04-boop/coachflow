@@ -3,8 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Gift, Loader2, Mail, Share2, TrendingUp, Users } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { getSetupRequiredMessage } from "@/lib/supabase-errors";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { isValidEmail } from "@/lib/validation/email";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type ReferralRow = {
   id: string;
@@ -29,18 +33,6 @@ type ReferralPayload = {
   error?: string;
 };
 
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
-}
-
 function formatDate(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -62,14 +54,14 @@ function StatCard({
   icon: typeof Users;
 }) {
   return (
-    <div className="glass-panel rounded-2xl p-5">
+    <div className="football-panel football-panel-interactive rounded-2xl p-5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-muted text-sm font-medium">{label}</p>
           <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
           <p className="text-muted mt-1 text-xs">{hint}</p>
         </div>
-        <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+        <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
           <Icon className="text-accent size-5" aria-hidden />
         </div>
       </div>
@@ -86,6 +78,7 @@ export function ReferralsManager() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [setupTables, setSetupTables] = useState<string[]>([]);
+  const [emailError, setEmailError] = useState<string | null>(null);
 
   const loadReferrals = useCallback(async () => {
     setLoading(true);
@@ -100,12 +93,12 @@ export function ReferralsManager() {
         return;
       }
       if (!response.ok) {
-        setError(payload.error ?? "Unable to load referrals.");
+        setError(sanitizeDashboardSaveError(payload.error, { logLabel: "referrals-load" }));
         return;
       }
       setData(payload);
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "referrals-load" }));
     } finally {
       setLoading(false);
     }
@@ -132,26 +125,38 @@ export function ReferralsManager() {
 
   async function sendInvite(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSending(true);
     setError(null);
     setSuccess(null);
+
+    const trimmedEmail = inviteEmail.trim();
+    if (!trimmedEmail) {
+      setEmailError("Email is required.");
+      return;
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      setEmailError("Please enter a valid email address.");
+      return;
+    }
+
+    setEmailError(null);
+    setSending(true);
 
     try {
       const response = await fetch("/api/referrals/send-invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail }),
+        body: JSON.stringify({ email: trimmedEmail }),
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(payload.error ?? "Could not send invite.");
+        setError(sanitizeDashboardSaveError(payload.error, { logLabel: "referrals-invite" }));
         return;
       }
       setInviteEmail("");
       setSuccess("Referral invite sent.");
       await loadReferrals();
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "referrals-invite" }));
     } finally {
       setSending(false);
     }
@@ -160,11 +165,11 @@ export function ReferralsManager() {
   const metrics = data?.metrics;
 
   return (
-    <div className="space-y-10">
+    <div className="page-content-enter space-y-10">
       <FeaturePageHeader
         featureKey="referrals"
         title="Referrals"
-        subtitle="Invite other football coaches to CoachFlow. When a referred coach becomes a paying customer, you earn one free month of Pro or equivalent account credit."
+        subtitle="Invite other football coaches to Awarix. When a referred coach becomes a paying customer, you earn one free month of Pro or equivalent account credit."
         subtitleClassName="max-w-2xl"
       />
 
@@ -175,29 +180,22 @@ export function ReferralsManager() {
         />
       ) : null}
 
-      {error ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
+      {error ? <FormErrorAlert message={error} /> : null}
       {success ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-accent">
+        <div className="football-panel football-panel-interactive rounded-2xl p-5 text-sm text-accent">
           {success}
         </div>
       ) : null}
 
       {loading ? (
-        <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Loading referrals...
-        </div>
+        <PanelSkeleton />
       ) : null}
 
       {!loading && data && setupTables.length === 0 ? (
         <>
-          <section className="glass-panel rounded-2xl p-6 sm:p-8">
+          <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
             <div className="flex items-start gap-3">
-              <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+              <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
                 <Share2 className="text-accent size-5" aria-hidden />
               </div>
               <div className="min-w-0 flex-1">
@@ -251,26 +249,46 @@ export function ReferralsManager() {
             />
           </section>
 
-          <section className="glass-panel rounded-2xl p-6 sm:p-8">
+          <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
             <h2 className="text-lg font-semibold tracking-tight">
               Share by email
             </h2>
             <p className="text-muted mt-1 text-sm">
-              Send a branded CoachFlow invite and count it as an invitation.
+              Send a branded Awarix invite and count it as an invitation.
             </p>
-            <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={sendInvite}>
-              <input
-                type="email"
-                required
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                placeholder="coach@example.com"
-                className="border-border bg-background text-foreground focus:ring-accent/40 h-11 min-w-0 flex-1 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
-              />
+            <form className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-start" onSubmit={sendInvite}>
+              <div className="min-w-0 flex-1">
+                <label className="mb-2 block text-sm font-medium" htmlFor="inviteEmail">
+                  Coach email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="inviteEmail"
+                  type="email"
+                  required
+                  value={inviteEmail}
+                  onChange={(e) => {
+                    setInviteEmail(e.target.value);
+                    if (emailError) setEmailError(null);
+                  }}
+                  aria-invalid={emailError ? true : undefined}
+                  aria-describedby={emailError ? "inviteEmail-error" : undefined}
+                  placeholder="coach@example.com"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
+                />
+                {emailError ? (
+                  <p
+                    id="inviteEmail-error"
+                    role="alert"
+                    className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+                  >
+                    {emailError}
+                  </p>
+                ) : null}
+              </div>
               <button
                 type="submit"
                 disabled={sending}
-                className="bg-accent text-white hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
+                className="bg-accent text-white hover:opacity-90 sm:mt-7 inline-flex h-11 shrink-0 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
               >
                 {sending ? (
                   <>
@@ -278,7 +296,7 @@ export function ReferralsManager() {
                     Sending...
                   </>
                 ) : (
-                  "Send invite"
+                  "Send Invite"
                 )}
               </button>
             </form>
@@ -289,7 +307,7 @@ export function ReferralsManager() {
               Referral activity
             </h2>
             {(data.referrals ?? []).length === 0 ? (
-              <div className="glass-panel rounded-2xl p-6 text-sm text-muted">
+              <div className="football-panel football-panel-interactive rounded-2xl p-6 text-sm text-muted">
                 No referral activity yet.
               </div>
             ) : (
@@ -297,7 +315,7 @@ export function ReferralsManager() {
                 {(data.referrals ?? []).map((referral) => (
                   <article
                     key={referral.id}
-                    className="glass-panel flex flex-col gap-3 rounded-2xl p-5 sm:flex-row sm:items-center sm:justify-between"
+                    className="football-panel flex flex-col gap-3 rounded-2xl p-5 sm:flex-row sm:items-center sm:justify-between"
                   >
                     <div>
                       <p className="font-medium capitalize">

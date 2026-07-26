@@ -23,6 +23,13 @@ import {
   type SessionTypeOption,
 } from "@/lib/booking-system";
 import { createClient } from "@/lib/supabase";
+import {
+  MAX_ROLLING_WEEKS,
+  MIN_CAPACITY,
+  MIN_DURATION_MINUTES,
+  MIN_ROLLING_WEEKS,
+  MIN_SUBSCRIPTION_AMOUNT_PENCE,
+} from "@/lib/validation/constants";
 import { cn } from "@/lib/utils";
 
 type RecurringSeriesManagerProps = {
@@ -63,6 +70,14 @@ const defaultFormState: RecurringSeriesFormState = {
   rollingWeeks: "8",
 };
 
+type SeriesFieldErrors = {
+  title?: string;
+  durationMinutes?: string;
+  capacity?: string;
+  rollingWeeks?: string;
+  monthlyPrice?: string;
+};
+
 function getErrorMessage(error: unknown): string {
   if (
     typeof error === "object" &&
@@ -97,6 +112,7 @@ export function RecurringSeriesManager({
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<SeriesFieldErrors>({});
 
   const templateById = useMemo(
     () => new Map(availabilityTemplates.map((template) => [template.id, template])),
@@ -134,27 +150,33 @@ export function RecurringSeriesManager({
     const capacity = Number.parseInt(form.capacity, 10);
     const rollingWeeks = Number.parseInt(form.rollingWeeks, 10);
 
+    const nextFieldErrors: SeriesFieldErrors = {};
     if (!form.title.trim()) {
-      setSubmitError("Title is required.");
-      return;
+      nextFieldErrors.title = "Title is required.";
     }
-    if (!Number.isFinite(durationMinutes) || durationMinutes < 15) {
-      setSubmitError("Duration must be at least 15 minutes.");
-      return;
+    if (!Number.isFinite(durationMinutes) || durationMinutes < MIN_DURATION_MINUTES) {
+      nextFieldErrors.durationMinutes = `Duration must be at least ${MIN_DURATION_MINUTES} minutes.`;
     }
-    if (!Number.isFinite(capacity) || capacity < 1) {
-      setSubmitError("Capacity must be at least 1.");
-      return;
+    if (!Number.isFinite(capacity) || capacity < MIN_CAPACITY) {
+      nextFieldErrors.capacity = `Capacity must be at least ${MIN_CAPACITY}.`;
     }
-    if (!Number.isFinite(rollingWeeks) || rollingWeeks < 1 || rollingWeeks > 24) {
-      setSubmitError("Rolling weeks must be between 1 and 24.");
-      return;
+    if (
+      !Number.isFinite(rollingWeeks) ||
+      rollingWeeks < MIN_ROLLING_WEEKS ||
+      rollingWeeks > MAX_ROLLING_WEEKS
+    ) {
+      nextFieldErrors.rollingWeeks = `Rolling weeks must be between ${MIN_ROLLING_WEEKS} and ${MAX_ROLLING_WEEKS}.`;
     }
-    if (monthlyPrice < 100) {
-      setSubmitError("Monthly price must be at least £1.00.");
+    if (monthlyPrice < MIN_SUBSCRIPTION_AMOUNT_PENCE) {
+      nextFieldErrors.monthlyPrice = "Monthly price must be at least £1.00.";
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
       return;
     }
 
+    setFieldErrors({});
     setSaving(true);
     setSubmitError(null);
 
@@ -201,6 +223,7 @@ export function RecurringSeriesManager({
       }
 
       setForm(defaultFormState);
+      setFieldErrors({});
     } catch (caughtError: unknown) {
       setSubmitError(getErrorMessage(caughtError));
     } finally {
@@ -234,18 +257,17 @@ export function RecurringSeriesManager({
   }
 
   return (
-    <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+    <section className="football-panel football-panel-interactive rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
       <div className="flex items-start gap-3">
-        <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+        <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
           <Repeat className="text-accent size-5" aria-hidden />
         </div>
         <div>
           <h2 className="text-lg font-semibold tracking-tight">
-            Recurring coaching subscriptions
+            Weekly subscription sessions
           </h2>
           <p className="text-muted mt-1 text-sm">
-            Create weekly coaching subscriptions with simple monthly billing and a
-            seamless parent booking experience.
+            Offer weekly training packages with monthly parent billing — ideal for academy squads and small-group coaching.
           </p>
         </div>
       </div>
@@ -259,7 +281,7 @@ export function RecurringSeriesManager({
             id="seriesTemplate"
             value={form.templateId}
             onChange={(event) => applyTemplate(event.target.value)}
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           >
             <option value="">Manual recurring setup</option>
             {availabilityTemplates.map((template) => (
@@ -273,16 +295,30 @@ export function RecurringSeriesManager({
 
         <div className="sm:col-span-2">
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesTitle">
-            Product title
+            Product title <span className="text-red-500">*</span>
           </label>
           <input
             id="seriesTitle"
             value={form.title}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, title: event.target.value }))
-            }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            onChange={(event) => {
+              setForm((current) => ({ ...current, title: event.target.value }));
+              if (fieldErrors.title) {
+                setFieldErrors((current) => ({ ...current, title: undefined }));
+              }
+            }}
+            aria-invalid={fieldErrors.title ? true : undefined}
+            aria-describedby={fieldErrors.title ? "seriesTitle-error" : undefined}
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
+          {fieldErrors.title ? (
+            <p
+              id="seriesTitle-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.title}
+            </p>
+          ) : null}
         </div>
 
         <div>
@@ -295,7 +331,7 @@ export function RecurringSeriesManager({
             onChange={(event) =>
               setForm((current) => ({ ...current, dayOfWeek: event.target.value }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           >
             {DAY_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -316,7 +352,7 @@ export function RecurringSeriesManager({
             onChange={(event) =>
               setForm((current) => ({ ...current, startTime: event.target.value }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
         </div>
 
@@ -333,7 +369,7 @@ export function RecurringSeriesManager({
                 sessionType: event.target.value as SessionTypeOption,
               }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           >
             {SESSION_TYPE_OPTIONS.filter((option) => option !== "Camp").map((option) => (
               <option key={option} value={option}>
@@ -345,27 +381,43 @@ export function RecurringSeriesManager({
 
         <div>
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesDuration">
-            Session duration
+            Session duration <span className="text-red-500">*</span>
           </label>
           <input
             id="seriesDuration"
             type="number"
-            min={15}
-            step={15}
+            min={MIN_DURATION_MINUTES}
+            step={MIN_DURATION_MINUTES}
             value={form.durationMinutes}
-            onChange={(event) =>
+            onChange={(event) => {
               setForm((current) => ({
                 ...current,
                 durationMinutes: event.target.value,
-              }))
+              }));
+              if (fieldErrors.durationMinutes) {
+                setFieldErrors((current) => ({ ...current, durationMinutes: undefined }));
+              }
+            }}
+            aria-invalid={fieldErrors.durationMinutes ? true : undefined}
+            aria-describedby={
+              fieldErrors.durationMinutes ? "seriesDuration-error" : undefined
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
+          {fieldErrors.durationMinutes ? (
+            <p
+              id="seriesDuration-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.durationMinutes}
+            </p>
+          ) : null}
         </div>
 
         <div>
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesMonthlyPrice">
-            Monthly price
+            Monthly price <span className="text-red-500">*</span>
           </label>
           <div className="relative">
             <PoundSterling className="text-muted pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2" />
@@ -373,53 +425,99 @@ export function RecurringSeriesManager({
               id="seriesMonthlyPrice"
               inputMode="decimal"
               value={form.monthlyPrice}
-              onChange={(event) =>
+              onChange={(event) => {
                 setForm((current) => ({
                   ...current,
                   monthlyPrice: event.target.value,
-                }))
+                }));
+                if (fieldErrors.monthlyPrice) {
+                  setFieldErrors((current) => ({ ...current, monthlyPrice: undefined }));
+                }
+              }}
+              aria-invalid={fieldErrors.monthlyPrice ? true : undefined}
+              aria-describedby={
+                fieldErrors.monthlyPrice ? "seriesMonthlyPrice-error" : undefined
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border pr-3 pl-9 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border pr-3 pl-9 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             />
           </div>
+          {fieldErrors.monthlyPrice ? (
+            <p
+              id="seriesMonthlyPrice-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.monthlyPrice}
+            </p>
+          ) : null}
         </div>
 
         <div>
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesCapacity">
-            Capacity
+            Capacity <span className="text-red-500">*</span>
           </label>
           <input
             id="seriesCapacity"
             type="number"
-            min={1}
+            min={MIN_CAPACITY}
             step={1}
             value={form.capacity}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, capacity: event.target.value }))
-            }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            onChange={(event) => {
+              setForm((current) => ({ ...current, capacity: event.target.value }));
+              if (fieldErrors.capacity) {
+                setFieldErrors((current) => ({ ...current, capacity: undefined }));
+              }
+            }}
+            aria-invalid={fieldErrors.capacity ? true : undefined}
+            aria-describedby={fieldErrors.capacity ? "seriesCapacity-error" : undefined}
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
+          {fieldErrors.capacity ? (
+            <p
+              id="seriesCapacity-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.capacity}
+            </p>
+          ) : null}
         </div>
 
         <div>
           <label className="mb-2 block text-sm font-medium" htmlFor="seriesRollingWeeks">
-            Weeks planned ahead
+            Weeks planned ahead <span className="text-red-500">*</span>
           </label>
           <input
             id="seriesRollingWeeks"
             type="number"
-            min={1}
-            max={24}
+            min={MIN_ROLLING_WEEKS}
+            max={MAX_ROLLING_WEEKS}
             step={1}
             value={form.rollingWeeks}
-            onChange={(event) =>
+            onChange={(event) => {
               setForm((current) => ({
                 ...current,
                 rollingWeeks: event.target.value,
-              }))
+              }));
+              if (fieldErrors.rollingWeeks) {
+                setFieldErrors((current) => ({ ...current, rollingWeeks: undefined }));
+              }
+            }}
+            aria-invalid={fieldErrors.rollingWeeks ? true : undefined}
+            aria-describedby={
+              fieldErrors.rollingWeeks ? "seriesRollingWeeks-error" : undefined
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
+          {fieldErrors.rollingWeeks ? (
+            <p
+              id="seriesRollingWeeks-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.rollingWeeks}
+            </p>
+          ) : null}
         </div>
 
         <div className="sm:col-span-2">
@@ -432,7 +530,7 @@ export function RecurringSeriesManager({
             onChange={(event) =>
               setForm((current) => ({ ...current, location: event.target.value }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           />
         </div>
 
@@ -446,7 +544,7 @@ export function RecurringSeriesManager({
             onChange={(event) =>
               setForm((current) => ({ ...current, notes: event.target.value }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             placeholder="What does the weekly subscription include?"
           />
         </div>
@@ -464,7 +562,7 @@ export function RecurringSeriesManager({
                 visibility: event.target.value as "public" | "private",
               }))
             }
-            className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+            className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
           >
             <option value="public">Public booking portal</option>
             <option value="private">Private / internal only</option>
@@ -473,13 +571,16 @@ export function RecurringSeriesManager({
 
         <div className="rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
           <p className="font-medium">
-            Parents subscribe one child at a time, while CoachFlow keeps upcoming
+            Parents subscribe one child at a time, while Awarix keeps upcoming
             sessions, spaces, and attendance in sync automatically.
           </p>
         </div>
 
         {submitError ? (
-          <p className="sm:col-span-2 text-sm text-red-600 dark:text-red-400">
+          <p
+            className="sm:col-span-2 break-words text-sm text-red-600 dark:text-red-400"
+            role="alert"
+          >
             {submitError}
           </p>
         ) : null}
@@ -493,10 +594,10 @@ export function RecurringSeriesManager({
             {saving ? (
               <>
                 <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                Creating recurring series...
+                Creating...
               </>
             ) : (
-              "Create recurring subscription"
+              "Create weekly subscription"
             )}
           </button>
         </div>

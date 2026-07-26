@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">CoachFlow</string>
-    <string name="title_activity_main">CoachFlow</string>
-    <string name="package_name">com.coachflow.app</string>
-    <string name="custom_url_scheme">com.coachflow.app</string>
+    <string name="app_name">Awarix</string>
+    <string name="title_activity_main">Awarix</string>
+    <string name="package_name">com.awarix.app</string>
+    <string name="custom_url_scheme">com.awarix.app</string>
 </resources>

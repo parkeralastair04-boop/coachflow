@@ -1,14 +1,21 @@
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
 import { AcademyBrandShell } from "@/components/academy-brand-shell";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { getAcademyForUser } from "@/lib/academy";
+import { getAuthenticatedUser } from "@/lib/auth/server";
+import { privateRouteMetadata } from "@/lib/private-route-metadata";
 import {
   FEATURE_KEYS,
   getCurrentSubscription,
   planHasFeature,
 } from "@/lib/subscription";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+
+export const metadata: Metadata = {
+  ...privateRouteMetadata,
+  title: "Dashboard",
+};
 
 export default async function DashboardLayout({
   children,
@@ -19,15 +26,12 @@ export default async function DashboardLayout({
     redirect("/login?next=/dashboard");
   }
 
-  const supabase = await createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const user = await getAuthenticatedUser();
   if (!user) {
     redirect("/login?next=/dashboard");
   }
 
+  // Academy + subscription share cached getAuthenticatedUser / getServerSupabase.
   const [academy, subscription] = await Promise.all([
     getAcademyForUser(user.id),
     getCurrentSubscription(),
@@ -43,6 +47,9 @@ export default async function DashboardLayout({
       <DashboardShell
         academy={academy}
         enabledFeatures={enabledFeatures}
+        userEmail={subscription?.email ?? user.email ?? null}
+        isFounder={subscription?.isFounder ?? false}
+        isBetaTester={subscription?.isBetaTester ?? false}
       >
         {children}
       </DashboardShell>

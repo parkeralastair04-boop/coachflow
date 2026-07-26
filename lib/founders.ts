@@ -1,14 +1,28 @@
-import type { PlanId } from "@/lib/billing";
-import { getComplimentaryAccess } from "@/lib/complimentary-access";
+import "server-only";
 
-export const FOUNDER_EMAILS = ["parkeralastair04@gmail.com"] as const;
+import type { PlanId } from "@/lib/billing";
+import { getOptionalServerEnv } from "@/lib/env/server";
+
+/**
+ * Founder complimentary emails from server-only env (comma-separated).
+ * Never import this module from client components.
+ */
+export function getFounderEmails(): readonly string[] {
+  // Prefer Awarix env; fall back to pre-rebrand var so existing deploys keep access.
+  const raw =
+    getOptionalServerEnv("AWARIX_FOUNDER_EMAILS") ||
+    getOptionalServerEnv("COACHFLOW_FOUNDER_EMAILS");
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 export function isFounder(email: string | null | undefined): boolean {
   if (!email?.trim()) return false;
   const normalized = email.trim().toLowerCase();
-  return (FOUNDER_EMAILS as readonly string[]).some(
-    (founder) => founder.toLowerCase() === normalized,
-  );
+  return getFounderEmails().some((founder) => founder === normalized);
 }
 
 export type AccountBillingAccess = {
@@ -16,16 +30,3 @@ export type AccountBillingAccess = {
   status: "active" | "inactive";
   isFounder: boolean;
 };
-
-/** Effective billing access for UI and gates. Founders always get Academy with active status. */
-export function getAccountBillingAccess(
-  email: string | null | undefined,
-  metadata?: Record<string, unknown> | null,
-): AccountBillingAccess {
-  const access = getComplimentaryAccess({ email, metadata });
-  return {
-    plan: access.plan,
-    status: access.status,
-    isFounder: access.isFounder,
-  };
-}

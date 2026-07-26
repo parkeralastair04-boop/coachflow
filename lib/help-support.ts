@@ -1,11 +1,13 @@
-export const SUPPORT_EMAIL = "support@coachflow.website";
+import { BRAND } from "@/lib/brand-identity";
+
+export const SUPPORT_EMAIL = BRAND.supportEmail;
 
 /** E.164 without + for wa.me links */
 export const SUPPORT_WHATSAPP_E164 = "447818968712";
 
 export const SUPPORT_WHATSAPP_URL = `https://wa.me/${SUPPORT_WHATSAPP_E164}`;
 
-export const FEATURE_OVERVIEW_URL = "https://coachflow.website/#features";
+export const FEATURE_OVERVIEW_URL = BRAND.featuresUrl;
 
 export const BUG_PRIORITIES = ["low", "medium", "high", "critical"] as const;
 export type BugPriority = (typeof BUG_PRIORITIES)[number];
@@ -41,13 +43,13 @@ export const QUICK_START_STEPS = [
     step: 1,
     title: "Name your academy",
     description:
-      "Complete the onboarding wizard or open your dashboard checklist to set your business name and branding.",
+      "Complete the match-ready wizard or open your checklist to set your academy name and club branding.",
   },
   {
     step: 2,
-    title: "Add players and teams",
+    title: "Add players later (optional)",
     description:
-      "Build your squad in Players, then group them into teams for registers and session planning.",
+      "You can take bookings without a full squad. Add players when you’re ready for registers and development reports.",
   },
   {
     step: 3,
@@ -65,7 +67,7 @@ export const QUICK_START_STEPS = [
     step: 5,
     title: "Send your first report",
     description:
-      "Paste session notes in Reports and generate a parent-ready summary — available on Starter and above.",
+      "After your first sessions, paste notes in Reports to generate a parent-ready summary.",
   },
 ] as const;
 
@@ -81,7 +83,7 @@ export const USER_GUIDE_ARTICLES: readonly UserGuideArticle[] = [
   {
     id: "players",
     title: "Players",
-    summary: "Manage your player CRM, parent contacts, and football profiles.",
+    summary: "Active Squad profiles, parent contacts, and football attributes.",
     href: "/dashboard/players",
     steps: [
       "Open Players under Coaching Operations in the sidebar.",
@@ -111,7 +113,7 @@ export const USER_GUIDE_ARTICLES: readonly UserGuideArticle[] = [
       "Open Sessions and choose date, time, session type, duration, and capacity.",
       "Link a team or individual players when scheduling group or 1-to-1 blocks.",
       "Set a price in pounds and toggle public visibility to allow parent bookings.",
-      "Track attendance status and notes from the session list as sessions are delivered.",
+      "Record attendance status and notes from the session list as sessions are delivered.",
     ],
   },
   {
@@ -129,7 +131,7 @@ export const USER_GUIDE_ARTICLES: readonly UserGuideArticle[] = [
   {
     id: "attendance",
     title: "Attendance",
-    summary: "Track per-player attendance across sessions and squads.",
+    summary: "Per-player attendance across sessions and squads.",
     href: "/dashboard/registers",
     steps: [
       "Attendance is recorded at the player level inside Registers, not just per session.",
@@ -158,8 +160,8 @@ export const USER_GUIDE_ARTICLES: readonly UserGuideArticle[] = [
     steps: [
       "Open Payments (Pro and Academy) to create Stripe customers and checkout links per player.",
       "Send parents a secure payment link for one-off fees or recurring coaching subscriptions.",
-      "Track subscription status, renewals, and failed payments from the payments dashboard.",
-      "Stripe handles card storage and renewals — CoachFlow stores subscription metadata only.",
+      "Review subscription status, renewals, and failed payments from Parent Payments.",
+      "Stripe handles card storage and renewals — Awarix stores subscription metadata only.",
     ],
   },
   {

@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { createClient } from "@/lib/supabase";
-import { readClientComplimentaryAccess } from "@/lib/complimentary-access-client";
+import { Button, type ButtonProps } from "@/components/ui/button";
+import { FieldError } from "@/components/ui/field";
+import { fetchAccountEntitlementsComplimentary } from "@/lib/complimentary-access-client";
 
 function getErrorMessage(error: unknown): string {
   if (
@@ -17,7 +18,18 @@ function getErrorMessage(error: unknown): string {
   return "Could not open billing portal.";
 }
 
-export function ManageBillingButton() {
+type ManageBillingButtonProps = {
+  label?: string;
+  className?: string;
+} & Pick<ButtonProps, "variant" | "size" | "shape">;
+
+export function ManageBillingButton({
+  label = "Manage Subscription",
+  variant = "accent",
+  size = "md",
+  shape = "pill",
+  className,
+}: ManageBillingButtonProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [complimentaryMessage, setComplimentaryMessage] = useState<string | null>(null);
@@ -26,16 +38,9 @@ export function ManageBillingButton() {
     let cancelled = false;
     void (async () => {
       try {
-        const supabase = createClient();
-        const access = await readClientComplimentaryAccess(supabase);
+        const access = await fetchAccountEntitlementsComplimentary();
         if (!cancelled && access.hasComplimentaryAccess) {
-          if (access.isBetaTester) {
-            setComplimentaryMessage("Complimentary Academy Access");
-          } else if (access.isFounder) {
-            setComplimentaryMessage("You have complimentary founder access.");
-          } else {
-            setComplimentaryMessage("Complimentary Academy Access");
-          }
+          setComplimentaryMessage("Complimentary Academy access");
         }
       } catch {
         if (!cancelled) setComplimentaryMessage(null);
@@ -50,20 +55,8 @@ export function ManageBillingButton() {
     setLoading(true);
     setError(null);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user?.email) {
-        setError("Please sign in with an email account to manage billing.");
-        return;
-      }
-
       const response = await fetch("/api/stripe/create-portal-session", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ customerEmail: user.email }),
       });
 
       const payload = (await response.json()) as { url?: string; error?: string };
@@ -87,23 +80,26 @@ export function ManageBillingButton() {
   }
 
   return (
-    <div>
-      <button
+    <div className={className}>
+      <Button
         type="button"
+        variant={variant}
+        size={size}
+        shape={shape}
+        className="w-full sm:w-auto"
         onClick={() => void handleOpenPortal()}
         disabled={loading}
-        className="bg-foreground text-background hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
       >
         {loading ? (
           <>
-            <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+            <Loader2 className="size-4 animate-spin" aria-hidden />
             Opening portal...
           </>
         ) : (
-          "Manage Billing"
+          label
         )}
-      </button>
-      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      </Button>
+      <FieldError className="mt-2">{error}</FieldError>
     </div>
   );
 }

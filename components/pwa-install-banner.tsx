@@ -1,15 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Download, Plus, Share2, Sparkles, X } from "lucide-react";
 import { BrandAppIcon } from "@/components/brand-mark";
+
+function isPublicBookingPath(pathname: string): boolean {
+  if (pathname === "/book" || pathname.startsWith("/book/")) return true;
+  return /^\/academy\/[^/]+\/book\/?$/.test(pathname);
+}
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
-const DISMISSED_KEY = "coachflow:pwa-install-dismissed";
+const DISMISSED_KEY = "awarix:pwa-install-dismissed";
 
 function isStandaloneDisplayMode() {
   return (
@@ -27,6 +33,7 @@ function isIosDevice() {
 }
 
 export function PwaInstallBanner() {
+  const pathname = usePathname();
   const [promptEvent, setPromptEvent] = useState<BeforeInstallPromptEvent | null>(
     null,
   );
@@ -107,6 +114,7 @@ export function PwaInstallBanner() {
     setVisible(false);
   }
 
+  if (isPublicBookingPath(pathname)) return null;
   if (!visible) return null;
   if (mode === "prompt" && !promptEvent) return null;
 
@@ -125,10 +133,10 @@ export function PwaInstallBanner() {
               </span>
             </div>
             <p className="mt-3 text-base font-semibold tracking-tight">
-              Add CoachFlow to Home Screen
+              Add Awarix to Home Screen
             </p>
             <p className="text-muted mt-1 text-sm leading-relaxed">
-              Launch faster, keep CoachFlow close at hand, and enjoy a cleaner app-like
+              Launch faster, keep Awarix close at hand, and enjoy a cleaner app-like
               experience on mobile.
             </p>
 
@@ -151,13 +159,13 @@ export function PwaInstallBanner() {
                   className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity"
                 >
                   <Download className="mr-2 size-4" aria-hidden />
-                  Install CoachFlow
+                  Install Awarix
                 </button>
               ) : null}
               <button
                 type="button"
                 onClick={handleDismiss}
-                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
               >
                 Maybe later
               </button>

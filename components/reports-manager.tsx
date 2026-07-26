@@ -1,15 +1,46 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, FileDown, Loader2, Mail, Sparkles, Trash2 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Check, Copy, FileDown, Loader2, Mail, Sparkles, Trash2, UserRound } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { FormErrorAlert } from "@/components/form-error-alert";
+import { EmptyState } from "@/components/empty-state";
+import { footballEmptyPreset } from "@/lib/football-identity";
+import { CoachSetupGuidance } from "@/components/coach-setup-guidance";
+import { ReportsAttendanceBlock } from "@/components/attendance-display";
 import {
-  getAttendanceLabel,
-  getAttendanceRate,
-  getAttendanceSummary,
-  type PlayerAttendanceStatus,
-} from "@/lib/attendance";
+  EMPTY_GUIDED_REPORT_NOTES,
+  GuidedReportNotesFields,
+} from "@/components/guided-report-notes-fields";
+import { ReportViewModal } from "@/components/report-view-modal";
+import { StructuredReportDisplay } from "@/components/structured-report-display";
+import { getAttendanceLabel } from "@/lib/attendance";
+import {
+  PLAYER_ATTENDANCE_HISTORY_SELECT,
+  parsePlayerAttendanceHistory,
+  type AttendanceHistoryRow,
+  type PlayerAttendanceHistory,
+} from "@/lib/attendance-history";
+import {
+  guidedNotesToPlainText,
+  hasGuidedNoteContent,
+  parseGuidedNotes,
+  type GuidedReportNotes,
+} from "@/lib/guided-report-notes";
 import { generateReportPdf, getReportPdfFilename } from "@/lib/report-pdf";
+import {
+  DEFAULT_REPORT_TEMPLATE,
+  REPORT_TEMPLATE_OPTIONS,
+  type ReportTemplateId,
+} from "@/lib/report-templates";
+import {
+  formatReportPlainText,
+  getReportExcerpt,
+  parseReportContent,
+  serializeStructuredReport,
+  type StructuredProgressReport,
+} from "@/lib/structured-report";
 import {
   getPlayerProfileSummary,
   normalizeSecondaryPositions,
@@ -18,6 +49,8 @@ import {
 } from "@/lib/player-profile";
 import { getPlayerTeams, getTeamDisplayName, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type PlayerOption = {
   id: string;
@@ -35,60 +68,25 @@ type SavedReport = {
   raw_notes: string;
   report: string;
   created_at: string;
+  parent_visible?: boolean;
 };
-
-type AttendanceHistoryRow = {
-  session_id: string;
-  player_id: string;
-  status: PlayerAttendanceStatus;
-  recorded_at: string;
-  session:
-    | {
-        session_date: string;
-        session_type: string | null;
-        group_name: string | null;
-        team: { team_name: string; age_group: string | null }[] | {
-          team_name: string;
-          age_group: string | null;
-        } | null;
-      }[]
-    | {
-        session_date: string;
-        session_type: string | null;
-        group_name: string | null;
-        team: { team_name: string; age_group: string | null }[] | {
-          team_name: string;
-          age_group: string | null;
-        } | null;
-      }
-    | null;
-};
-
-type AttendanceSummaryState = {
-  rate: number;
-  counts: Record<PlayerAttendanceStatus, number>;
-  recent: Array<{ label: string; status: PlayerAttendanceStatus }>;
-};
-
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
-}
 
 export function ReportsManager() {
+  const searchParams = useSearchParams();
+  const focusPlayerId = searchParams.get("player")?.trim() ?? null;
+
   const [coachId, setCoachId] = useState("");
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [savedReports, setSavedReports] = useState<SavedReport[]>([]);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
-  const [notes, setNotes] = useState("");
+  const [guidedNotes, setGuidedNotes] = useState<GuidedReportNotes>(
+    EMPTY_GUIDED_REPORT_NOTES,
+  );
   const [report, setReport] = useState("");
+  const [reportTemplate, setReportTemplate] = useState<ReportTemplateId>(
+    DEFAULT_REPORT_TEMPLATE,
+  );
+  const [academyName, setAcademyName] = useState("Awarix");
   const [loadingPlayers, setLoadingPlayers] = useState(true);
   const [loadingReports, setLoadingReports] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -101,10 +99,15 @@ export function ReportsManager() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [attendanceSummary, setAttendanceSummary] =
-    useState<AttendanceSummaryState | null>(null);
+    useState<PlayerAttendanceHistory | null>(null);
   const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    player?: string;
+    notes?: string;
+  }>({});
   const [reportsError, setReportsError] = useState<string | null>(null);
+  const [viewingReport, setViewingReport] = useState<SavedReport | null>(null);
 
   const selectedPlayer = useMemo(
     () => players.find((player) => player.id === selectedPlayerId) ?? null,
@@ -123,19 +126,19 @@ export function ReportsManager() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("progress_reports")
-        .select("id, coach_id, player_id, raw_notes, report, created_at")
+        .select("id, coach_id, player_id, raw_notes, report, created_at, parent_visible")
         .eq("coach_id", userCoachId)
         .eq("player_id", playerId)
         .order("created_at", { ascending: false });
 
       if (error) {
-        setReportsError(error.message);
+        setReportsError(sanitizeDashboardSaveError(error, { logLabel: "reports-load" }));
         return;
       }
 
       setSavedReports((data ?? []) as SavedReport[]);
     } catch (caughtError: unknown) {
-      setReportsError(getErrorMessage(caughtError));
+      setReportsError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-load" }));
     } finally {
       setLoadingReports(false);
     }
@@ -151,23 +154,7 @@ export function ReportsManager() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("session_attendance")
-        .select(
-          `
-            session_id,
-            player_id,
-            status,
-            recorded_at,
-            session:sessions (
-              session_date,
-              session_type,
-              group_name,
-              team:teams (
-                team_name,
-                age_group
-              )
-            )
-          `,
-        )
+        .select(PLAYER_ATTENDANCE_HISTORY_SELECT)
         .eq("coach_id", userCoachId)
         .eq("player_id", playerId)
         .order("recorded_at", { ascending: false });
@@ -177,31 +164,9 @@ export function ReportsManager() {
         return;
       }
 
-      const rows = (data ?? []) as AttendanceHistoryRow[];
-      const counts = getAttendanceSummary(rows);
-      const recent = rows.slice(0, 5).map((row) => {
-        const session = Array.isArray(row.session) ? row.session[0] : row.session;
-        const team = Array.isArray(session?.team) ? session?.team[0] : session?.team;
-        const label =
-          session?.group_name?.trim() ||
-          team?.team_name?.trim() ||
-          session?.session_type?.trim() ||
-          new Intl.DateTimeFormat("en-GB", {
-            month: "short",
-            day: "numeric",
-          }).format(new Date(row.recorded_at));
-
-        return {
-          label,
-          status: row.status,
-        };
-      });
-
-      setAttendanceSummary({
-        rate: getAttendanceRate(rows),
-        counts,
-        recent,
-      });
+      setAttendanceSummary(
+        parsePlayerAttendanceHistory((data ?? []) as AttendanceHistoryRow[]),
+      );
     } catch {
       setAttendanceSummary(null);
     }
@@ -222,7 +187,7 @@ export function ReportsManager() {
 
         if (cancelled) return;
         if (userError) {
-          setFormError(userError.message);
+          setFormError(sanitizeDashboardSaveError(userError, { logLabel: "reports-auth" }));
           return;
         }
         if (!user) {
@@ -230,6 +195,19 @@ export function ReportsManager() {
           return;
         }
         setCoachId(user.id);
+
+        const { data: membership } = await supabase
+          .from("academy_members")
+          .select("academy:academies(name)")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (!cancelled) {
+          const academy = membership?.academy as { name?: string } | { name?: string }[] | null;
+          const resolvedAcademy = Array.isArray(academy) ? academy[0] : academy;
+          setAcademyName(resolvedAcademy?.name?.trim() || "Awarix");
+        }
 
         const { data, error: playersError } = await supabase
           .from("players")
@@ -241,7 +219,7 @@ export function ReportsManager() {
 
         if (cancelled) return;
         if (playersError) {
-          setFormError(playersError.message);
+          setFormError(sanitizeDashboardSaveError(playersError, { logLabel: "reports-load" }));
           return;
         }
 
@@ -254,7 +232,10 @@ export function ReportsManager() {
         }));
         setPlayers(safePlayers);
         if (safePlayers.length > 0) {
-          const initialPlayerId = safePlayers[0].id;
+          const initialPlayerId =
+            focusPlayerId && safePlayers.some((player) => player.id === focusPlayerId)
+              ? focusPlayerId
+              : safePlayers[0].id;
           setSelectedPlayerId(initialPlayerId);
           await Promise.all([
             loadSavedReports(user.id, initialPlayerId),
@@ -262,7 +243,7 @@ export function ReportsManager() {
           ]);
         }
       } catch (caughtError: unknown) {
-        if (!cancelled) setFormError(getErrorMessage(caughtError));
+        if (!cancelled) setFormError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-load" }));
       } finally {
         if (!cancelled) setLoadingPlayers(false);
       }
@@ -272,10 +253,12 @@ export function ReportsManager() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [focusPlayerId]);
 
   async function handlePlayerChange(playerId: string) {
     setSelectedPlayerId(playerId);
+    setGuidedNotes(EMPTY_GUIDED_REPORT_NOTES);
+    setReport("");
     setSendSuccess(null);
     setSendError(null);
     if (!coachId) return;
@@ -283,6 +266,15 @@ export function ReportsManager() {
       loadSavedReports(coachId, playerId),
       loadAttendanceSummary(coachId, playerId),
     ]);
+  }
+
+  function handleReuseNotes(saved: SavedReport) {
+    setGuidedNotes(parseGuidedNotes(saved.raw_notes));
+    setFieldErrors((current) => ({ ...current, notes: undefined }));
+    document.getElementById("generate-report-form")?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
   }
 
   async function handleGenerateReport(e: React.FormEvent<HTMLFormElement>) {
@@ -293,29 +285,40 @@ export function ReportsManager() {
     setSendError(null);
     setPdfError(null);
 
+    const nextFieldErrors: { player?: string; notes?: string } = {};
     if (!selectedPlayer) {
-      setFormError("Please select a player.");
-      return;
+      nextFieldErrors.player = "Please select a player.";
     }
-    if (!notes.trim()) {
-      setFormError("Please add coaching notes before generating a report.");
+    const notesText = guidedNotesToPlainText(guidedNotes);
+    if (!hasGuidedNoteContent(guidedNotes)) {
+      nextFieldErrors.notes = "Please add coaching notes before generating a report.";
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
       return;
     }
 
+    setFieldErrors({});
     setGenerating(true);
     try {
+      const player = selectedPlayer;
+      if (!player) return;
+
+      const previousReport = savedReports[0];
       const response = await fetch("/api/generate-report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          playerName: selectedPlayer.player_name,
+          playerName: player.player_name,
+          template: reportTemplate,
           playerProfile: {
-            preferredFoot: selectedPlayer.preferred_foot,
-            primaryPosition: selectedPlayer.primary_position,
-            secondaryPositions: selectedPlayer.secondary_positions,
-            teamNames: getPlayerTeams(selectedPlayer.team_players).map((team) =>
+            preferredFoot: player.preferred_foot,
+            primaryPosition: player.primary_position,
+            secondaryPositions: player.secondary_positions,
+            teamNames: getPlayerTeams(player.team_players).map((team) =>
               getTeamDisplayName(team),
             ),
             attendanceSummary: attendanceSummary
@@ -323,33 +326,41 @@ export function ReportsManager() {
                   attendanceRate: Math.round(attendanceSummary.rate),
                   counts: attendanceSummary.counts,
                   recent: attendanceSummary.recent.map((entry) => ({
-                    label: entry.label,
+                    label: entry.sessionName,
                     status: getAttendanceLabel(entry.status),
                   })),
                 }
               : null,
+            reportCount: savedReports.length,
+            previousReportExcerpt: previousReport
+              ? getReportExcerpt(previousReport.report, 180)
+              : null,
+            recentForm: formatRecentForm(attendanceSummary),
           },
-          notes: notes.trim(),
+          notes: notesText,
         }),
       });
 
-      const payload = (await response.json()) as { report?: string; error?: string };
+      const payload = (await response.json()) as {
+        sections?: StructuredProgressReport;
+        error?: string;
+      };
 
       if (!response.ok) {
-        setFormError(payload.error ?? "Failed to generate report.");
+        setFormError(sanitizeDashboardSaveError(payload.error, { logLabel: "reports-generate" }));
         return;
       }
-      if (!payload.report) {
+      if (!payload.sections) {
         setFormError("No report was generated.");
         return;
       }
 
-      setReport(payload.report);
+      setReport(serializeStructuredReport(payload.sections));
       setSendSuccess(null);
       setSendError(null);
       setPdfError(null);
     } catch (caughtError: unknown) {
-      setFormError(getErrorMessage(caughtError));
+      setFormError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-generate" }));
     } finally {
       setGenerating(false);
     }
@@ -368,18 +379,19 @@ export function ReportsManager() {
       const payload = {
         coach_id: coachId,
         player_id: selectedPlayerId,
-        raw_notes: notes.trim(),
+        raw_notes: guidedNotesToPlainText(guidedNotes),
         report: report.trim(),
+        parent_visible: false,
       };
 
       const { data, error } = await supabase
         .from("progress_reports")
         .insert(payload)
-        .select("id, coach_id, player_id, raw_notes, report, created_at")
+        .select("id, coach_id, player_id, raw_notes, report, created_at, parent_visible")
         .single();
 
       if (error) {
-        setFormError(error.message);
+        setFormError(sanitizeDashboardSaveError(error, { logLabel: "reports-save" }));
         return;
       }
 
@@ -387,7 +399,7 @@ export function ReportsManager() {
         setSavedReports((current) => [data as SavedReport, ...current]);
       }
     } catch (caughtError: unknown) {
-      setFormError(getErrorMessage(caughtError));
+      setFormError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-generate" }));
     } finally {
       setSavingReport(false);
     }
@@ -398,7 +410,7 @@ export function ReportsManager() {
     setCopying(true);
     setFormError(null);
     try {
-      await navigator.clipboard.writeText(report);
+      await navigator.clipboard.writeText(formatReportPlainText(parseReportContent(report)));
       setCopied(true);
     } catch {
       setFormError("Could not copy report. Please copy manually.");
@@ -425,18 +437,26 @@ export function ReportsManager() {
         body: JSON.stringify({
           playerId: selectedPlayerId,
           report: report.trim(),
+          reportId: savedReports.find((item) => item.report.trim() === report.trim())?.id,
         }),
       });
 
       const payload = (await response.json()) as { id?: string | null; error?: string };
       if (!response.ok) {
-        setSendError(payload.error ?? "Could not send report.");
+        setSendError(sanitizeDashboardSaveError(payload.error, { logLabel: "reports-send" }));
         return;
       }
 
-      setSendSuccess("Report sent to parent.");
+      setSendSuccess("Report sent and shared with the parent portal.");
+      setSavedReports((current) =>
+        current.map((item) =>
+          item.report.trim() === report.trim()
+            ? { ...item, parent_visible: true }
+            : item,
+        ),
+      );
     } catch (caughtError: unknown) {
-      setSendError(getErrorMessage(caughtError));
+      setSendError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-send" }));
     } finally {
       setSendingReport(false);
     }
@@ -461,6 +481,7 @@ export function ReportsManager() {
           getTeamDisplayName(team),
         ),
         report: report.trim(),
+        academyName,
         date,
       });
       const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
@@ -475,9 +496,33 @@ export function ReportsManager() {
       anchor.remove();
       URL.revokeObjectURL(url);
     } catch (caughtError: unknown) {
-      setPdfError(getErrorMessage(caughtError));
+      setPdfError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-pdf" }));
     } finally {
       setDownloadingPdf(false);
+    }
+  }
+
+  async function handleToggleParentVisible(saved: SavedReport) {
+    if (!coachId) return;
+    const nextVisible = !saved.parent_visible;
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("progress_reports")
+        .update({ parent_visible: nextVisible })
+        .eq("id", saved.id)
+        .eq("coach_id", coachId);
+      if (error) {
+        setReportsError(sanitizeDashboardSaveError(error, { logLabel: "reports-share" }));
+        return;
+      }
+      setSavedReports((current) =>
+        current.map((item) =>
+          item.id === saved.id ? { ...item, parent_visible: nextVisible } : item,
+        ),
+      );
+    } catch (caughtError: unknown) {
+      setReportsError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-share" }));
     }
   }
 
@@ -495,19 +540,33 @@ export function ReportsManager() {
         .eq("coach_id", coachId);
 
       if (error) {
-        setReportsError(error.message);
+        setReportsError(sanitizeDashboardSaveError(error, { logLabel: "reports-load" }));
         return;
       }
 
       setSavedReports((current) => current.filter((item) => item.id !== reportId));
     } catch (caughtError: unknown) {
-      setReportsError(getErrorMessage(caughtError));
+      setReportsError(sanitizeDashboardSaveError(caughtError, { logLabel: "reports-load" }));
     } finally {
       setDeletingReportId(null);
     }
   }
 
-  function formatDate(dateValue: string): string {
+  function handleStartFromPreviousNotes() {
+    const latest = savedReports[0];
+    if (!latest?.raw_notes.trim()) return;
+    handleReuseNotes(latest);
+  }
+
+  function formatRecentForm(history: PlayerAttendanceHistory | null): string {
+    if (!history || history.recent.length === 0) return "";
+    return history.recent
+      .slice(0, 6)
+      .map((entry) => getAttendanceLabel(entry.status))
+      .join(" · ");
+  }
+
+  function formatReportDate(dateValue: string): string {
     const parsed = new Date(dateValue);
     if (Number.isNaN(parsed.getTime())) return dateValue;
     return new Intl.DateTimeFormat("en-GB", {
@@ -517,23 +576,38 @@ export function ReportsManager() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="page-content-enter space-y-8">
       <FeaturePageHeader
         featureKey="reports"
-        title="AI Progress Reports"
-        subtitle="Turn session notes into polished parent-ready updates in seconds."
+        title="Player Development"
+        subtitle="Turn session notes into polished parent-ready development updates in seconds."
       />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <h2 className="text-lg font-semibold tracking-tight">Generate report</h2>
         <p className="text-muted mt-1 text-sm">
           Select a player, paste coaching notes, then generate a concise report.
         </p>
 
-        <form className="mt-6 space-y-4" onSubmit={handleGenerateReport}>
+        {!loadingPlayers && players.length === 0 ? (
+          <div className="mt-6">
+            <CoachSetupGuidance
+              icon={UserRound}
+              title="Build your squad first"
+              description="Add a player before generating development reports. Reports turn your pitch-side notes into polished updates for parents."
+              actionHref="/dashboard/players"
+              actionLabel="Add your first player"
+            />
+          </div>
+        ) : (
+        <form
+          id="generate-report-form"
+          className="mt-6 space-y-4"
+          onSubmit={handleGenerateReport}
+        >
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="player">
-              Player
+              Player <span className="text-red-500">*</span>
             </label>
             <select
               id="player"
@@ -541,8 +615,11 @@ export function ReportsManager() {
               value={selectedPlayerId}
               onChange={(e) => {
                 void handlePlayerChange(e.target.value);
+                if (fieldErrors.player) setFieldErrors((c) => ({ ...c, player: undefined }));
               }}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-70"
+              aria-invalid={fieldErrors.player ? true : undefined}
+              aria-describedby={fieldErrors.player ? "player-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-70"
             >
               {players.length === 0 ? (
                 <option value="">No players available</option>
@@ -553,6 +630,15 @@ export function ReportsManager() {
                 </option>
               ))}
             </select>
+            {fieldErrors.player ? (
+              <p
+                id="player-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.player}
+              </p>
+            ) : null}
           </div>
 
           {selectedPlayer ? (
@@ -573,43 +659,90 @@ export function ReportsManager() {
                     .join(", ")}
                 </p>
               ) : null}
-              {attendanceSummary ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
-                    Attendance {Math.round(attendanceSummary.rate)}%
-                  </span>
-                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
-                    {attendanceSummary.counts.present + attendanceSummary.counts.late} positive
-                  </span>
-                  <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
-                    {attendanceSummary.counts.absent} absent
-                  </span>
-                </div>
-              ) : null}
+              {attendanceSummary && attendanceSummary.recent.length > 0 ? (
+                <ReportsAttendanceBlock history={attendanceSummary} />
+              ) : (
+                <p className="text-muted mt-3 text-sm">No attendance records yet.</p>
+              )}
             </div>
           ) : null}
 
           <div>
-            <label className="mb-2 block text-sm font-medium" htmlFor="notes">
-              Raw Coaching Notes
+            <label className="mb-2 block text-sm font-medium" htmlFor="report-template">
+              Report template
             </label>
-            <textarea
-              id="notes"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Paste your session notes: technical highlights, decisions, physical output, attitude, and next focus."
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-40 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
-            />
+            <select
+              id="report-template"
+              value={reportTemplate}
+              onChange={(event) =>
+                setReportTemplate(event.target.value as ReportTemplateId)
+              }
+              disabled={generating}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-70"
+            >
+              {REPORT_TEMPLATE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-muted mt-2 text-sm">
+              {
+                REPORT_TEMPLATE_OPTIONS.find((option) => option.id === reportTemplate)
+                  ?.description
+              }
+            </p>
           </div>
 
-          {formError ? (
-            <p className="text-sm text-red-600 dark:text-red-400">{formError}</p>
+          <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                Coaching notes <span className="text-red-500">*</span>
+              </p>
+              {savedReports[0]?.raw_notes.trim() ? (
+                <button
+                  type="button"
+                  onClick={handleStartFromPreviousNotes}
+                  disabled={generating}
+                  className="text-accent focus-visible:ring-accent/40 inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+                >
+                  Start from previous notes
+                </button>
+              ) : null}
+            </div>
+            <GuidedReportNotesFields
+              value={guidedNotes}
+              onChange={(nextNotes) => {
+                setGuidedNotes(nextNotes);
+                if (fieldErrors.notes) {
+                  setFieldErrors((current) => ({ ...current, notes: undefined }));
+                }
+              }}
+              disabled={generating}
+            />
+            {fieldErrors.notes ? (
+              <p
+                id="notes-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.notes}
+              </p>
+            ) : null}
+          </div>
+
+          {formError ? <FormErrorAlert message={formError} /> : null}
+
+          {generating ? (
+            <p className="text-muted text-sm" role="status" aria-live="polite">
+              Generating structured report for {selectedPlayer?.player_name ?? "player"}...
+            </p>
           ) : null}
 
           <button
             type="submit"
             disabled={loadingPlayers || generating || players.length === 0}
-            className="bg-foreground text-background hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
+            className="bg-foreground text-background hover:opacity-90 inline-flex min-h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
           >
             {generating ? (
               <>
@@ -624,17 +757,15 @@ export function ReportsManager() {
             )}
           </button>
         </form>
+        )}
       </section>
 
       {loadingPlayers ? (
-        <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Loading players...
-        </div>
+        <PanelSkeleton />
       ) : null}
 
       {report ? (
-        <section className="glass-panel rounded-2xl p-6 sm:p-8">
+        <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold tracking-tight">Generated report</h2>
             <div className="flex flex-wrap items-center gap-2">
@@ -642,7 +773,7 @@ export function ReportsManager() {
                 type="button"
                 onClick={() => void handleDownloadPdf()}
                 disabled={downloadingPdf}
-                className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60 dark:hover:bg-white/[0.06]"
               >
                 {downloadingPdf ? (
                   <>
@@ -660,7 +791,7 @@ export function ReportsManager() {
                 type="button"
                 onClick={() => void handleCopy()}
                 disabled={copying}
-                className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex min-h-11 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60 dark:hover:bg-white/[0.06]"
               >
                 {copied ? (
                   <>
@@ -676,15 +807,15 @@ export function ReportsManager() {
               </button>
             </div>
           </div>
-          <p className="text-muted mt-4 whitespace-pre-wrap rounded-xl bg-black/[0.02] p-4 text-sm leading-relaxed dark:bg-white/[0.03]">
-            {report}
-          </p>
+          <div className="text-muted mt-4 rounded-xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+            <StructuredReportDisplay report={report} />
+          </div>
           <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               type="button"
               onClick={() => void handleSaveReport()}
               disabled={savingReport}
-              className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity disabled:opacity-60"
+              className="bg-foreground text-background hover:opacity-90 focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
             >
               {savingReport ? (
                 <>
@@ -699,7 +830,7 @@ export function ReportsManager() {
               type="button"
               onClick={() => void handleSendReport()}
               disabled={sendingReport}
-              className="bg-accent text-white hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity disabled:opacity-60"
+              className="bg-accent text-white hover:opacity-90 focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
             >
               {sendingReport ? (
                 <>
@@ -717,12 +848,8 @@ export function ReportsManager() {
           {sendSuccess ? (
             <p className="mt-3 text-sm text-accent">{sendSuccess}</p>
           ) : null}
-          {sendError ? (
-            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{sendError}</p>
-          ) : null}
-          {pdfError ? (
-            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{pdfError}</p>
-          ) : null}
+          {sendError ? <FormErrorAlert message={sendError} className="mt-3" /> : null}
+          {pdfError ? <FormErrorAlert message={pdfError} className="mt-3" /> : null}
         </section>
       ) : null}
 
@@ -734,26 +861,19 @@ export function ReportsManager() {
           ) : null}
         </div>
 
-        {reportsError ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-            {reportsError}
-          </div>
-        ) : null}
+        {reportsError ? <FormErrorAlert message={reportsError} /> : null}
 
         {loadingReports ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading saved reports...
-          </div>
+          <PanelSkeleton />
         ) : null}
 
         {!loadingReports &&
         !reportsError &&
         selectedPlayerId &&
         savedReports.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-muted">
-            No saved reports for this player yet.
-          </div>
+          <EmptyState
+            {...footballEmptyPreset("reports")}
+          />
         ) : null}
 
         {!loadingReports &&
@@ -761,17 +881,19 @@ export function ReportsManager() {
         selectedPlayerId &&
         savedReports.length > 0 ? (
           <div className="grid gap-4">
-            {savedReports.map((saved) => (
-              <article key={saved.id} className="glass-panel rounded-2xl p-5 sm:p-6">
+            {savedReports.map((saved, index) => {
+              const previousReport = savedReports[index + 1] ?? null;
+              return (
+              <article key={saved.id} className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-xs uppercase tracking-wide text-muted">
-                    {formatDate(saved.created_at)}
+                    {formatReportDate(saved.created_at)}
                   </p>
                   <button
                     type="button"
                     onClick={() => void handleDeleteSavedReport(saved.id)}
                     disabled={deletingReportId === saved.id}
-                    className="text-muted hover:text-red-500 inline-flex items-center justify-center rounded-lg p-2 transition-colors disabled:opacity-60"
+                    className="text-muted hover:text-red-500 focus-visible:ring-accent/40 inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
                     aria-label="Delete saved report"
                   >
                     {deletingReportId === saved.id ? (
@@ -781,14 +903,76 @@ export function ReportsManager() {
                     )}
                   </button>
                 </div>
-                <p className="mt-3 whitespace-pre-wrap rounded-xl bg-black/[0.02] p-4 text-sm leading-relaxed text-muted dark:bg-white/[0.03]">
-                  {saved.report}
+                <p className="mt-3 text-sm leading-relaxed">
+                  {getReportExcerpt(saved.report, 120) || "Report saved."}
                 </p>
+                {previousReport ? (
+                  <div className="mt-4 rounded-xl border border-dashed border-black/10 p-4 dark:border-white/10">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Compared with previous report
+                    </p>
+                    <p className="text-muted mt-2 text-sm">
+                      Last report: {formatReportDate(previousReport.created_at)}
+                    </p>
+                    <p className="text-muted mt-2 text-sm leading-relaxed">
+                      {getReportExcerpt(previousReport.report, 120)}
+                    </p>
+                  </div>
+                ) : null}
+                {saved.raw_notes.trim() ? (
+                  <div className="mt-4 rounded-xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted">
+                      Original coaching notes
+                    </p>
+                    <p className="text-muted mt-2 whitespace-pre-wrap text-sm leading-relaxed">
+                      {saved.raw_notes}
+                    </p>
+                  </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setViewingReport(saved)}
+                    className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-xl border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
+                  >
+                    View report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleParentVisible(saved)}
+                    className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-xl border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
+                  >
+                    {saved.parent_visible ? "Unshare with parent" : "Share with parent"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleReuseNotes(saved)}
+                    className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex min-h-11 items-center justify-center rounded-xl border px-4 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
+                  >
+                    Reuse notes
+                  </button>
+                </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </section>
+
+      {selectedPlayer ? (
+        <ReportViewModal
+          open={viewingReport !== null}
+          onClose={() => setViewingReport(null)}
+          report={viewingReport}
+          playerId={selectedPlayer.id}
+          playerName={selectedPlayer.player_name}
+          preferredFoot={selectedPlayer.preferred_foot}
+          primaryPosition={selectedPlayer.primary_position}
+          secondaryPositions={selectedPlayer.secondary_positions}
+          teams={getPlayerTeams(selectedPlayer.team_players)}
+          academyName={academyName}
+        />
+      ) : null}
     </div>
   );
 }

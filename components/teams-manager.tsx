@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -10,21 +11,45 @@ import {
   Plus,
   Save,
   Search,
-  Shield,
   Trash2,
   Users,
   X,
 } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
+import { footballEmptyPreset } from "@/lib/football-identity";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { TeamOverviewCard } from "@/components/team-overview-card";
+import { TeamRoleBadge } from "@/components/team-role-badge";
+import { TeamSquadPanel } from "@/components/team-squad-panel";
 import { type PlayerPositionOption } from "@/lib/player-profile";
+import {
+  buildAttendanceByPlayer,
+  buildReportsByPlayer,
+  buildSquadPlayerCards,
+  buildTeamAttendanceInsights,
+  buildTeamOverviewMetrics,
+  buildTeamReportsInsights,
+  type TeamAttendanceRow,
+  type TeamReportRow,
+  type TeamSessionRow,
+} from "@/lib/team-insights";
+import {
+  buildAttendanceLeaders,
+  buildCategorizedSupportPlayers,
+  buildMissingReportPlayers,
+  buildTeamActivityTimeline,
+  buildTeamAttendanceTrend,
+  buildTeamFormIndicators,
+  buildTeamSeasonOverview,
+} from "@/lib/team-season-insights";
 import {
   TEAM_COLOR_SWATCHES,
   getRoleLabel,
-  getTeamDisplayName,
   getTeamMembershipPlayer,
   groupMembershipsByPosition,
   isTeamRole,
   normalizeTeamColor,
+  sortSquadDisplayOrder,
   sortTeamMemberships,
   type TeamPlayerMembership,
   type TeamRow,
@@ -33,11 +58,13 @@ import {
 } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type PlayerOption = {
   id: string;
   player_name: string;
   primary_position: PlayerPositionOption | null;
+  parent_email: string | null;
 };
 
 type TeamFormState = {
@@ -74,7 +101,9 @@ const TEAM_SELECT = `
     player:players (
       id,
       player_name,
-      primary_position
+      primary_position,
+      preferred_foot,
+      parent_email
     )
   )
 `;
@@ -106,10 +135,17 @@ function normalizeTeamRow(team: TeamRow): TeamRow {
 }
 
 export function TeamsManager() {
+  const searchParams = useSearchParams();
+  const focusTeamId = searchParams.get("team")?.trim() ?? null;
+  const focusHandledRef = useRef<string | null>(null);
+
   const [coachId, setCoachId] = useState<string | null>(null);
   const [academyId, setAcademyId] = useState<string | null>(null);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [teams, setTeams] = useState<TeamRow[]>([]);
+  const [sessions, setSessions] = useState<TeamSessionRow[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<TeamAttendanceRow[]>([]);
+  const [reportRows, setReportRows] = useState<TeamReportRow[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [form, setForm] = useState<TeamFormState>(defaultFormState);
@@ -149,29 +185,134 @@ export function TeamsManager() {
   }, [membershipQuery, players]);
 
   const sortedRoster = useMemo(
-    () => sortTeamMemberships(currentTeam?.team_players ?? [], sortBy),
-    [currentTeam, sortBy],
+    () => sortSquadDisplayOrder(currentTeam?.team_players ?? []),
+    [currentTeam],
   );
+
+  const parentEmailByPlayerId = useMemo(
+    () => new Map(players.map((player) => [player.id, player.parent_email])),
+    [players],
+  );
+
+  const attendanceByPlayer = useMemo(
+    () => buildAttendanceByPlayer(attendanceRows),
+    [attendanceRows],
+  );
+
+  const reportsByPlayer = useMemo(
+    () => buildReportsByPlayer(reportRows),
+    [reportRows],
+  );
+
+  const teamMetricsById = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof buildTeamOverviewMetrics>>();
+    for (const team of teams) {
+      map.set(
+        team.id,
+        buildTeamOverviewMetrics({
+          team,
+          sessions,
+          attendanceByPlayer,
+          reportsByPlayer,
+        }),
+      );
+    }
+    return map;
+  }, [teams, sessions, attendanceByPlayer, reportsByPlayer]);
+
+  const currentTeamInsights = useMemo(() => {
+    if (!currentTeam) return null;
+    const overview = buildTeamOverviewMetrics({
+      team: currentTeam,
+      sessions,
+      attendanceByPlayer,
+      reportsByPlayer,
+    });
+    const attendance = buildTeamAttendanceInsights({
+      team: currentTeam,
+      sessions,
+      attendanceRows,
+      attendanceByPlayer,
+    });
+    const reports = buildTeamReportsInsights({
+      team: currentTeam,
+      reportsByPlayer,
+    });
+    const memberships = sortSquadDisplayOrder(currentTeam.team_players ?? []);
+    const squadCards = buildSquadPlayerCards({
+      memberships,
+      attendanceByPlayer,
+      reportsByPlayer,
+    }).map((card) => ({
+      ...card,
+      parentEmail: parentEmailByPlayerId.get(card.playerId) ?? null,
+    }));
+    const categorizedSupport = buildCategorizedSupportPlayers({
+      team: currentTeam,
+      attendanceByPlayer,
+      reportsByPlayer,
+      parentEmailByPlayerId,
+    });
+    const now = new Date();
+    const upcomingSessions = sessions
+      .filter((session) => session.team_id === currentTeam.id)
+      .filter((session) => new Date(session.session_date) >= now)
+      .sort(
+        (left, right) =>
+          new Date(left.session_date).getTime() - new Date(right.session_date).getTime(),
+      );
+    const attendanceTrend = buildTeamAttendanceTrend(attendance);
+    const formIndicators = buildTeamFormIndicators({
+      team: currentTeam,
+      sessions,
+      attendanceRows,
+      attendanceRate: overview.attendanceRate,
+      trendDirection: attendanceTrend.direction,
+    });
+    const season = buildTeamSeasonOverview({
+      overview,
+      reports,
+      upcomingSessionCount: upcomingSessions.length,
+      supportCount: categorizedSupport.length,
+    });
+    const playerNameById = new Map(
+      squadCards.map((card) => [card.playerId, card.playerName]),
+    );
+
+    return {
+      overview,
+      attendance,
+      reports,
+      squadCards,
+      upcomingSessions,
+      season,
+      attendanceTrend,
+      formIndicators,
+      missingReports: buildMissingReportPlayers({ squadCards }),
+      attendanceLeaders: buildAttendanceLeaders(squadCards),
+      categorizedSupport,
+      timeline: buildTeamActivityTimeline({
+        team: currentTeam,
+        sessions,
+        attendanceRows,
+        reportRows,
+        playerNameById,
+      }),
+    };
+  }, [
+    currentTeam,
+    sessions,
+    attendanceRows,
+    reportRows,
+    attendanceByPlayer,
+    reportsByPlayer,
+    parentEmailByPlayerId,
+  ]);
 
   const groupedRoster = useMemo(
     () => groupMembershipsByPosition(currentTeam?.team_players ?? [], sortBy),
     [currentTeam, sortBy],
   );
-
-  const teamStats = useMemo(() => {
-    const memberships = currentTeam?.team_players ?? [];
-    const captain = memberships.find((membership) => membership.role === "captain");
-    const viceCaptain = memberships.find(
-      (membership) => membership.role === "vice_captain",
-    );
-    return {
-      totalPlayers: memberships.length,
-      captain: captain ? getTeamMembershipPlayer(captain)?.player_name ?? null : null,
-      viceCaptain: viceCaptain
-        ? getTeamMembershipPlayer(viceCaptain)?.player_name ?? null
-        : null,
-    };
-  }, [currentTeam]);
 
   const loadCoachData = useCallback(
     async (userId: string, preferredTeamId?: string | null) => {
@@ -182,10 +323,13 @@ export function TeamsManager() {
         const [
           { data: playersData, error: playersError },
           { data: teamsData, error: teamsError },
+          { data: sessionsData, error: sessionsError },
+          { data: attendanceData, error: attendanceError },
+          { data: reportsData, error: reportsError },
         ] = await Promise.all([
           supabase
             .from("players")
-            .select("id, player_name, primary_position")
+            .select("id, player_name, primary_position, parent_email")
             .eq("coach_id", userId)
             .order("player_name", { ascending: true }),
           supabase
@@ -193,11 +337,30 @@ export function TeamsManager() {
             .select(TEAM_SELECT)
             .eq("coach_id", userId)
             .order("created_at", { ascending: true }),
+          supabase
+            .from("sessions")
+            .select("id, team_id, session_date, session_type, group_name")
+            .eq("coach_id", userId)
+            .order("session_date", { ascending: true }),
+          supabase
+            .from("session_attendance")
+            .select("session_id, player_id, status, recorded_at")
+            .eq("coach_id", userId),
+          supabase
+            .from("progress_reports")
+            .select("id, player_id, created_at")
+            .eq("coach_id", userId)
+            .order("created_at", { ascending: false }),
         ]);
 
-        if (playersError || teamsError) {
+        if (playersError || teamsError || sessionsError || attendanceError || reportsError) {
           setError(
-            playersError?.message ?? teamsError?.message ?? "Could not load teams.",
+            playersError?.message ??
+              teamsError?.message ??
+              sessionsError?.message ??
+              attendanceError?.message ??
+              reportsError?.message ??
+              "Could not load teams.",
           );
           return;
         }
@@ -205,6 +368,9 @@ export function TeamsManager() {
         const safeTeams = ((teamsData ?? []) as TeamRow[]).map(normalizeTeamRow);
         setPlayers((playersData ?? []) as PlayerOption[]);
         setTeams(safeTeams);
+        setSessions((sessionsData ?? []) as TeamSessionRow[]);
+        setAttendanceRows((attendanceData ?? []) as TeamAttendanceRow[]);
+        setReportRows((reportsData ?? []) as TeamReportRow[]);
         setSelectedTeamId((current) => {
           const nextId = preferredTeamId ?? current;
           if (nextId && safeTeams.some((team) => team.id === nextId)) return nextId;
@@ -265,6 +431,21 @@ export function TeamsManager() {
       cancelled = true;
     };
   }, [loadCoachData]);
+
+  useEffect(() => {
+    if (!focusTeamId || loading || teams.length === 0) return;
+    if (focusHandledRef.current === focusTeamId) return;
+    if (!teams.some((team) => team.id === focusTeamId)) return;
+    focusHandledRef.current = focusTeamId;
+    const frame = window.requestAnimationFrame(() => {
+      setSelectedTeamId(focusTeamId);
+      document.getElementById("team-squad-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusTeamId, loading, teams]);
 
   function resetForm() {
     setEditingTeamId(null);
@@ -521,14 +702,14 @@ export function TeamsManager() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="page-content-enter space-y-8">
       <FeaturePageHeader
         featureKey="teams"
-        title="Teams"
-        subtitle="Build squads, assign players, and organise your rosters for sessions, registers, and season planning."
+        title="Squads"
+        subtitle="Group your active squad into age-group teams for registers, training sessions, and match-day planning."
       />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
@@ -543,7 +724,7 @@ export function TeamsManager() {
             <button
               type="button"
               onClick={resetForm}
-              className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+              className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
             >
               <X className="mr-2 size-4" aria-hidden />
               Cancel edit
@@ -563,7 +744,7 @@ export function TeamsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, teamName: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. U14 Elite"
             />
           </div>
@@ -578,7 +759,7 @@ export function TeamsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, ageGroup: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. U14 or Girls Academy"
             />
           </div>
@@ -590,7 +771,7 @@ export function TeamsManager() {
                 type="button"
                 onClick={() => setForm((current) => ({ ...current, teamColor: null }))}
                 className={cn(
-                  "border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]",
+                  "border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]",
                   !form.teamColor && "border-accent text-accent",
                 )}
               >
@@ -630,7 +811,7 @@ export function TeamsManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, notes: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="Season objectives, coaching themes, training schedule, or selection context..."
             />
           </div>
@@ -668,169 +849,101 @@ export function TeamsManager() {
         </form>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold tracking-tight">Your teams</h2>
-            {!loading ? (
-              <span className="text-muted text-sm">{teams.length} total</span>
-            ) : null}
-          </div>
-
-          {error ? (
-            <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-              {error}
-            </div>
-          ) : null}
-
-          {loading ? (
-            <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-              <Loader2 className="size-4 animate-spin" aria-hidden />
-              Loading teams...
-            </div>
-          ) : null}
-
-          {!loading && !error && teams.length === 0 ? (
-            <div className="glass-panel rounded-2xl p-8 text-center">
-              <Shield className="text-muted mx-auto size-8" aria-hidden />
-              <p className="mt-3 font-medium">No teams yet</p>
-              <p className="text-muted mt-1 text-sm">
-                Create your first squad to start organising rosters and session groups.
-              </p>
-            </div>
-          ) : null}
-
-          {!loading && !error && teams.length > 0 ? (
-            <div className="space-y-3">
-              {teams.map((team) => {
-                const selected = selectedTeamId === team.id;
-                return (
-                  <article
-                    key={team.id}
-                    className={cn(
-                      "glass-panel cursor-pointer rounded-2xl p-5 transition-colors",
-                      selected && "ring-accent/25 ring-1",
-                    )}
-                    onClick={() => setSelectedTeamId(team.id)}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="inline-flex size-3 shrink-0 rounded-full"
-                            style={{
-                              backgroundColor: team.team_color ?? "var(--color-accent)",
-                            }}
-                          />
-                          <h3 className="truncate text-base font-semibold tracking-tight">
-                            {team.team_name}
-                          </h3>
-                        </div>
-                        <p className="text-muted mt-1 text-sm">
-                          {team.age_group?.trim() || "No age group set"}
-                        </p>
-                      </div>
-                      <span className="bg-accent/10 text-accent ring-accent/20 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1">
-                        {team.team_players?.length ?? 0}
-                      </span>
-                    </div>
-
-                    {team.notes ? (
-                      <p className="text-muted mt-3 line-clamp-2 text-sm">{team.notes}</p>
-                    ) : null}
-
-                    <div className="mt-4 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          startEditing(team);
-                        }}
-                        className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center justify-center rounded-full border px-3 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
-                      >
-                        <Edit3 className="mr-2 size-4" aria-hidden />
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void handleDeleteTeam(team.id);
-                        }}
-                        disabled={deletingTeamId === team.id}
-                        className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center justify-center rounded-full border px-3 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
-                      >
-                        {deletingTeamId === team.id ? (
-                          <Loader2 className="size-4 animate-spin" aria-hidden />
-                        ) : (
-                          <>
-                            <Trash2 className="mr-2 size-4" aria-hidden />
-                            Delete
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+      <section className="space-y-6" aria-labelledby="teams-overview-heading">
+        <div className="flex items-center justify-between gap-3">
+          <h2 id="teams-overview-heading" className="text-lg font-semibold tracking-tight">
+            Team squads
+          </h2>
+          {!loading ? (
+            <span className="text-muted text-sm">{teams.length} total</span>
           ) : null}
         </div>
 
-        <div className="space-y-6">
-          {currentTeam ? (
-            <>
-              <section className="glass-panel rounded-2xl p-6 sm:p-8">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="inline-flex size-3 shrink-0 rounded-full"
-                        style={{
-                          backgroundColor:
-                            currentTeam.team_color ?? "var(--color-accent)",
-                        }}
-                      />
-                      <h2 className="text-xl font-semibold tracking-tight">
-                        {getTeamDisplayName(currentTeam)}
-                      </h2>
-                    </div>
-                    <p className="text-muted mt-2 text-sm">
-                      {currentTeam.notes?.trim() ||
-                        "Use this squad space to organise your roster, roles, and positional balance."}
-                    </p>
-                  </div>
+        {error ? (
+          <div className="football-panel football-panel-interactive rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
+            {error}
+          </div>
+        ) : null}
 
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl bg-black/[0.02] px-4 py-3 dark:bg-white/[0.03]">
-                      <p className="text-muted text-xs">Players</p>
-                      <p className="mt-1 text-lg font-semibold">{teamStats.totalPlayers}</p>
-                    </div>
-                    <div className="rounded-2xl bg-black/[0.02] px-4 py-3 dark:bg-white/[0.03]">
-                      <p className="text-muted text-xs">Captain</p>
-                      <p className="mt-1 text-sm font-medium">
-                        {teamStats.captain ?? "Not assigned"}
-                      </p>
-                    </div>
-                    <div className="rounded-2xl bg-black/[0.02] px-4 py-3 dark:bg-white/[0.03]">
-                      <p className="text-muted text-xs">Vice captain</p>
-                      <p className="mt-1 text-sm font-medium">
-                        {teamStats.viceCaptain ?? "Not assigned"}
-                      </p>
-                    </div>
+        {loading ? (
+          <PanelSkeleton />
+        ) : null}
+
+        {!loading && !error && teams.length === 0 ? (
+          <EmptyState {...footballEmptyPreset("teams")} />
+        ) : null}
+
+        {!loading && !error && teams.length > 0 ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            {teams.map((team) => {
+              const metrics = teamMetricsById.get(team.id);
+              if (!metrics) return null;
+              return (
+                <div key={team.id} className="relative">
+                  <TeamOverviewCard
+                    team={team}
+                    metrics={metrics}
+                    selected={selectedTeamId === team.id}
+                    onSelect={() => setSelectedTeamId(team.id)}
+                  />
+                  <div className="mt-2 flex justify-end gap-2 px-1">
+                    <button
+                      type="button"
+                      onClick={() => startEditing(team)}
+                      className="text-muted hover:text-foreground focus-visible:ring-accent/40 inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    >
+                      <Edit3 className="size-4" aria-hidden />
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteTeam(team.id)}
+                      disabled={deletingTeamId === team.id}
+                      className="text-muted hover:text-red-500 focus-visible:ring-accent/40 inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
+                    >
+                      {deletingTeamId === team.id ? (
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                      ) : (
+                        <>
+                          <Trash2 className="size-4" aria-hidden />
+                          Delete
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
-              </section>
+              );
+            })}
+          </div>
+        ) : null}
+      </section>
 
-              <section className="glass-panel rounded-2xl p-6 sm:p-8">
-                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold tracking-tight">Roster</h3>
-                    <p className="text-muted mt-1 text-sm">
-                      Sort by squad order, primary position, or name. Switch between a
-                      list view and grouped-by-position view whenever you need.
-                    </p>
-                  </div>
+      {currentTeam && currentTeamInsights ? (
+        <div id="team-squad-panel" className="space-y-6">
+          <TeamSquadPanel
+            team={currentTeam}
+            overview={currentTeamInsights.overview}
+            squadCards={currentTeamInsights.squadCards}
+            upcomingSessions={currentTeamInsights.upcomingSessions}
+            season={currentTeamInsights.season}
+            attendanceTrend={currentTeamInsights.attendanceTrend}
+            formIndicators={currentTeamInsights.formIndicators}
+            missingReports={currentTeamInsights.missingReports}
+            attendanceLeaders={currentTeamInsights.attendanceLeaders}
+            supportPlayers={currentTeamInsights.categorizedSupport}
+            timeline={currentTeamInsights.timeline}
+            loading={loading}
+          />
+
+          <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold tracking-tight">Manage squad roster</h3>
+                <p className="text-muted mt-1 text-sm">
+                  Sort by squad order, primary position, or name. Captain and vice captain
+                  appear first in squad views.
+                </p>
+              </div>
 
                   <div className="flex flex-col gap-3 sm:flex-row">
                     <select
@@ -838,7 +951,7 @@ export function TeamsManager() {
                       onChange={(event) =>
                         setSortBy(event.target.value as TeamSortOption)
                       }
-                      className="border-border bg-background text-foreground focus:ring-accent/40 h-11 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                      className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                     >
                       <option value="squad_order">Sort by squad order</option>
                       <option value="primary_position">Sort by primary position</option>
@@ -875,8 +988,7 @@ export function TeamsManager() {
 
                 {(currentTeam.team_players?.length ?? 0) === 0 ? (
                   <div className="mt-6 rounded-2xl bg-black/[0.02] p-6 text-sm text-muted dark:bg-white/[0.03]">
-                    No players assigned yet. Use the membership panel below to add your
-                    first squad members.
+                    Add players to build your squad.
                   </div>
                 ) : viewMode === "roster" ? (
                   <div className="mt-6 space-y-3">
@@ -897,9 +1009,7 @@ export function TeamsManager() {
                                   {player.primary_position ?? "No primary position"}
                                 </span>
                                 {membership.role ? (
-                                  <span className="bg-accent/10 text-accent ring-accent/20 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1">
-                                    {getRoleLabel(membership.role)}
-                                  </span>
+                                  <TeamRoleBadge role={membership.role} />
                                 ) : null}
                               </div>
                               <p className="text-muted mt-1 text-sm">
@@ -914,7 +1024,7 @@ export function TeamsManager() {
                                 onChange={(event) =>
                                   void changeRole(membership, event.target.value)
                                 }
-                                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+                                className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-60"
                               >
                                 <option value="">No role</option>
                                 <option value="captain">Captain</option>
@@ -930,14 +1040,14 @@ export function TeamsManager() {
                                   void changeSquadOrder(membership.id, event.target.value)
                                 }
                                 disabled={busy}
-                                className="border-border bg-background text-foreground focus:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+                                className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-60"
                               />
 
                               <button
                                 type="button"
                                 onClick={() => void moveMembership(membership.id, -1)}
                                 disabled={busy || index === 0}
-                                className="border-border hover:bg-black/[0.03] inline-flex h-10 w-10 items-center justify-center rounded-xl border transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
+                                className="border-border hover:bg-surface-hover inline-flex h-10 w-10 items-center justify-center rounded-xl border transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
                               >
                                 <ArrowUp className="size-4" aria-hidden />
                               </button>
@@ -948,7 +1058,7 @@ export function TeamsManager() {
                                   busy ||
                                   index === (currentTeam.team_players?.length ?? 1) - 1
                                 }
-                                className="border-border hover:bg-black/[0.03] inline-flex h-10 w-10 items-center justify-center rounded-xl border transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
+                                className="border-border hover:bg-surface-hover inline-flex h-10 w-10 items-center justify-center rounded-xl border transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
                               >
                                 <ArrowDown className="size-4" aria-hidden />
                               </button>
@@ -956,7 +1066,7 @@ export function TeamsManager() {
                                 type="button"
                                 onClick={() => void toggleMembership(player.id)}
                                 disabled={busy}
-                                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
+                                className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
                               >
                                 {busy ? (
                                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -1010,7 +1120,7 @@ export function TeamsManager() {
                                       onChange={(event) =>
                                         void changeRole(membership, event.target.value)
                                       }
-                                      className="border-border bg-background text-foreground focus:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-60"
+                                      className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-10 rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-60"
                                     >
                                       <option value="">No role</option>
                                       <option value="captain">Captain</option>
@@ -1020,7 +1130,7 @@ export function TeamsManager() {
                                       type="button"
                                       onClick={() => void toggleMembership(player.id)}
                                       disabled={busy}
-                                      className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
+                                      className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-xl border px-3 text-sm font-medium transition-colors disabled:opacity-50 dark:hover:bg-white/[0.06]"
                                     >
                                       {busy ? (
                                         <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -1040,7 +1150,7 @@ export function TeamsManager() {
                 )}
               </section>
 
-              <section className="glass-panel rounded-2xl p-6 sm:p-8">
+              <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <h3 className="text-lg font-semibold tracking-tight">
@@ -1090,9 +1200,7 @@ export function TeamsManager() {
                               {player.primary_position ?? "No primary position"}
                             </span>
                             {membership?.role ? (
-                              <span className="bg-accent/10 text-accent ring-accent/20 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1">
-                                {getRoleLabel(membership.role)}
-                              </span>
+                              <TeamRoleBadge role={membership.role} />
                             ) : null}
                           </div>
                           <p className="text-muted mt-1 text-sm">
@@ -1106,18 +1214,16 @@ export function TeamsManager() {
                   })}
                 </div>
               </section>
-            </>
-          ) : (
-            <div className="glass-panel rounded-2xl p-8 text-center">
-              <Users className="text-muted mx-auto size-8" aria-hidden />
-              <p className="mt-3 font-medium">Select a team</p>
-              <p className="text-muted mt-1 text-sm">
-                Choose a team from the left to view the roster and manage memberships.
-              </p>
-            </div>
-          )}
         </div>
-      </section>
+      ) : !loading && teams.length > 0 ? (
+        <div className="football-panel football-panel-interactive rounded-2xl p-8 text-center">
+          <Users className="text-muted mx-auto size-8" aria-hidden />
+          <p className="mt-3 font-medium">Select a team</p>
+          <p className="text-muted mt-1 text-sm">
+            Choose a squad card above to view the team hub and manage memberships.
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

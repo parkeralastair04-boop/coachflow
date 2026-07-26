@@ -11,7 +11,9 @@ import {
   Users,
 } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { FOOTBALL_LABELS } from "@/lib/football-identity";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import {
   isCountedAttendanceStatus,
   isMissedAttendanceStatus,
@@ -27,6 +29,14 @@ import {
   resolveQueryError,
 } from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
+import { buildTrainingAnalyticsSummary } from "@/lib/training-insights";
+import type { TrainingDrillRow, TrainingPlanRow } from "@/lib/training-types";
+import { buildFinanceOverview, formatFinanceCurrency } from "@/lib/finance-insights";
+import type { FinanceExpenseRow, FinanceInvoiceRow } from "@/lib/finance-types";
+import { attachPlayersToClips, buildVideoAnalyticsSummary } from "@/lib/video-insights";
+import type { VideoAssetRow, VideoClipRow } from "@/lib/video-types";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type PlayerRow = {
   id: string;
@@ -137,18 +147,17 @@ type AnalyticsData = {
   subscriptions: ParentSubscriptionRow[];
   camps: CampRow[];
   enrolments: CampEnrolmentRow[];
+  trainingPlans: TrainingPlanRow[];
+  trainingDrills: TrainingDrillRow[];
+  financeExpenses: FinanceExpenseRow[];
+  financeInvoices: FinanceInvoiceRow[];
+  videoAssets: VideoAssetRow[];
+  videoClips: VideoClipRow[];
+  videoClipPlayers: Array<{ clip_id: string; player_id: string }>;
 };
 
 function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
+  return sanitizeDashboardSaveError(error, { logLabel: "analytics" });
 }
 
 function currency(value: number): string {
@@ -209,23 +218,30 @@ function getGroupLabel(session: SessionRow): string {
 function StatCard({
   label,
   value,
+  valueAriaLabel,
   hint,
   icon: Icon,
 }: {
   label: string;
   value: string;
+  valueAriaLabel?: string;
   hint: string;
   icon: typeof Users;
 }) {
   return (
-    <div className="glass-panel rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
+    <div className="football-panel football-panel-interactive rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-muted text-sm font-medium">{label}</p>
-          <p className="mt-2 text-3xl font-semibold tracking-tight">{value}</p>
-          <p className="text-muted mt-1 text-xs">{hint}</p>
+          <p
+            className="mt-2 text-3xl font-semibold tracking-tight"
+            aria-label={valueAriaLabel ?? `${label}: ${value}`}
+          >
+            {value}
+          </p>
+          <p className="text-muted mt-1 text-xs leading-relaxed">{hint}</p>
         </div>
-        <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+        <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
           <Icon className="text-accent size-5" aria-hidden />
         </div>
       </div>
@@ -235,69 +251,96 @@ function StatCard({
 
 function MiniBarChart({
   title,
+  titleId,
   points,
   formatter = String,
   accent = "bg-accent",
+  emptyMessage,
 }: {
   title: string;
+  titleId: string;
   points: ChartPoint[];
   formatter?: (value: number) => string;
   accent?: string;
+  emptyMessage?: string;
 }) {
   const max = Math.max(...points.map((point) => point.value), 1);
+  const hasData = points.some((point) => point.value > 0);
 
   return (
-    <section className="glass-panel rounded-2xl p-6 sm:p-7">
+    <section
+      className="football-panel football-panel-interactive rounded-2xl p-6 sm:p-7"
+      aria-labelledby={titleId}
+    >
       <div className="mb-6 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+        <h2 id={titleId} className="text-lg font-semibold tracking-tight">
+          {title}
+        </h2>
         <BarChart3 className="text-muted size-5" aria-hidden />
       </div>
-      <div className="flex h-56 items-end gap-3">
-        {points.map((point) => (
-          <div key={point.label} className="flex h-full flex-1 flex-col justify-end gap-2">
-            <div className="flex flex-1 items-end rounded-xl bg-black/[0.03] p-1 dark:bg-white/[0.04]">
-              <div
-                className={cn("w-full rounded-lg transition-all", accent)}
-                style={{ height: `${Math.max((point.value / max) * 100, point.value > 0 ? 6 : 0)}%` }}
-                title={formatter(point.value)}
-              />
+      {!hasData && emptyMessage ? (
+        <div role="status" aria-live="polite" className="text-muted text-sm leading-relaxed">
+          <p className="font-medium text-foreground">No booking information yet.</p>
+          <p className="mt-2">{emptyMessage}</p>
+        </div>
+      ) : (
+        <div className="flex h-56 items-end gap-3" role="list" aria-label={`${title} chart`}>
+          {points.map((point) => (
+            <div key={point.label} className="flex h-full flex-1 flex-col justify-end gap-2" role="listitem">
+              <div className="flex flex-1 items-end rounded-xl bg-black/[0.03] p-1 dark:bg-white/[0.04]">
+                <div
+                  className={cn("w-full rounded-lg transition-all", accent)}
+                  style={{ height: `${Math.max((point.value / max) * 100, point.value > 0 ? 6 : 0)}%` }}
+                  title={formatter(point.value)}
+                  aria-label={`${point.label}: ${formatter(point.value)}`}
+                />
+              </div>
+              <div className="text-center">
+                <p className="text-muted text-[11px]">{point.label}</p>
+                <p className="mt-0.5 text-xs font-medium">{formatter(point.value)}</p>
+              </div>
             </div>
-            <div className="text-center">
-              <p className="text-muted text-[11px]">{point.label}</p>
-              <p className="mt-0.5 text-xs font-medium">{formatter(point.value)}</p>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
 function AttendanceBreakdownList({
   title,
+  titleId,
   rows,
   emptyMessage,
 }: {
   title: string;
+  titleId: string;
   rows: AttendanceBreakdownRow[];
   emptyMessage: string;
 }) {
   return (
-    <section className="glass-panel rounded-2xl p-6 sm:p-7">
-      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+    <section className="football-panel football-panel-interactive rounded-2xl p-6 sm:p-7" aria-labelledby={titleId}>
+      <h2 id={titleId} className="text-lg font-semibold tracking-tight">
+        {title}
+      </h2>
       {rows.length === 0 ? (
-        <p className="text-muted mt-4 text-sm">{emptyMessage}</p>
+        <p className="text-muted mt-4 text-sm leading-relaxed" role="status" aria-live="polite">
+          {emptyMessage}
+        </p>
       ) : (
-        <div className="mt-5 space-y-4">
+        <div className="mt-5 space-y-4" role="list">
           {rows.map((row) => (
-            <div key={row.label}>
+            <div key={row.label} role="listitem">
               <div className="flex items-center justify-between gap-3">
                 <p className="min-w-0 truncate text-sm font-medium">{row.label}</p>
                 <p className="text-muted text-xs">
                   {row.attended}/{row.total} attended
                 </p>
               </div>
-              <div className="mt-2 h-2 rounded-full bg-black/[0.05] dark:bg-white/[0.06]">
+              <div
+                className="mt-2 h-2 rounded-full bg-black/[0.05] dark:bg-white/[0.06]"
+                aria-hidden
+              >
                 <div
                   className="bg-accent h-full rounded-full transition-all"
                   style={{ width: `${Math.max(row.rate, row.total > 0 ? 6 : 0)}%` }}
@@ -331,7 +374,7 @@ export function AnalyticsManager() {
       } = await supabase.auth.getUser();
 
       if (userError) {
-        setError(userError.message);
+        setError(getErrorMessage(userError));
         return;
       }
       if (!user) {
@@ -349,6 +392,13 @@ export function AnalyticsManager() {
         subscriptionsResult,
         campsResult,
         enrolmentsResult,
+        trainingPlansResult,
+        trainingDrillsResult,
+        financeExpensesResult,
+        financeInvoicesResult,
+        videoAssetsResult,
+        videoClipsResult,
+        videoClipPlayersResult,
       ] = await Promise.all([
         supabase
           .from("players")
@@ -415,6 +465,13 @@ export function AnalyticsManager() {
           .from("camp_enrolments")
           .select("camp_id, coach_id, status")
           .eq("coach_id", user.id),
+        supabase.from("training_plans").select("*").eq("coach_id", user.id),
+        supabase.from("training_drills").select("*").eq("coach_id", user.id),
+        supabase.from("finance_expenses").select("*").eq("coach_id", user.id),
+        supabase.from("finance_invoices").select("*").eq("coach_id", user.id),
+        supabase.from("video_assets").select("*").eq("coach_id", user.id),
+        supabase.from("video_clips").select("*").eq("coach_id", user.id),
+        supabase.from("video_clip_players").select("clip_id, player_id"),
       ]);
 
       const requiredResults = [
@@ -478,6 +535,27 @@ export function AnalyticsManager() {
         enrolments: isMissingTableError(enrolmentsResult.error)
           ? []
           : ((enrolmentsResult.data ?? []) as CampEnrolmentRow[]),
+        trainingPlans: isMissingTableError(trainingPlansResult.error)
+          ? []
+          : ((trainingPlansResult.data ?? []) as unknown as TrainingPlanRow[]),
+        trainingDrills: isMissingTableError(trainingDrillsResult.error)
+          ? []
+          : ((trainingDrillsResult.data ?? []) as unknown as TrainingDrillRow[]),
+        financeExpenses: isMissingTableError(financeExpensesResult.error)
+          ? []
+          : ((financeExpensesResult.data ?? []) as unknown as FinanceExpenseRow[]),
+        financeInvoices: isMissingTableError(financeInvoicesResult.error)
+          ? []
+          : ((financeInvoicesResult.data ?? []) as unknown as FinanceInvoiceRow[]),
+        videoAssets: isMissingTableError(videoAssetsResult.error)
+          ? []
+          : ((videoAssetsResult.data ?? []) as unknown as VideoAssetRow[]),
+        videoClips: isMissingTableError(videoClipsResult.error)
+          ? []
+          : ((videoClipsResult.data ?? []) as unknown as VideoClipRow[]),
+        videoClipPlayers: isMissingTableError(videoClipPlayersResult.error)
+          ? []
+          : ((videoClipPlayersResult.data ?? []) as Array<{ clip_id: string; player_id: string }>),
       });
     } catch (caughtError: unknown) {
       setError(getErrorMessage(caughtError));
@@ -708,6 +786,26 @@ export function AnalyticsManager() {
       if (key in reportsSeries) reportsSeries[key] += 1;
     }
 
+    const trainingSummary = buildTrainingAnalyticsSummary({
+      plans: data.trainingPlans,
+      drills: data.trainingDrills,
+    });
+
+    const financeOverview = buildFinanceOverview({
+      bookings: data.sessionBookings,
+      subscriptions: data.subscriptions,
+      camps: data.camps as never,
+      enrolments: data.enrolments as never,
+      expenses: data.financeExpenses,
+      invoices: data.financeInvoices,
+    });
+
+    const videoSummary = buildVideoAnalyticsSummary({
+      assets: data.videoAssets,
+      clips: attachPlayersToClips(data.videoClips, data.videoClipPlayers),
+      players: data.players,
+    });
+
     return {
       metrics: {
         totalPlayers: data.players.length,
@@ -729,6 +827,16 @@ export function AnalyticsManager() {
         remainingPublicCapacity,
         campRevenue,
         averageCampOccupancy,
+        trainingHours: trainingSummary.trainingHours,
+        trainingPlansCompleted: trainingSummary.plansCompleted,
+        financeProfitThisMonth: financeOverview.profitThisMonth,
+        financeExpensesThisMonth: financeOverview.expensesThisMonth,
+        financeCashFlowThisMonth: financeOverview.cashFlowThisMonth,
+        videoClipsTotal: videoSummary.totalClips,
+        videoSharedClips: videoSummary.sharedClips,
+        videoReviewCompletion: videoSummary.reviewCompletionRate,
+        videoMatchClips: videoSummary.matchClips,
+        videoTrainingClips: videoSummary.trainingClips,
       },
       charts: {
         revenue: monthKeys.map((key) => ({
@@ -789,11 +897,11 @@ export function AnalyticsManager() {
   }, [data]);
 
   return (
-    <div className="space-y-10">
+    <div className="page-content-enter space-y-10">
       <FeaturePageHeader
         featureKey="analytics"
-        title="Analytics"
-        subtitle="Track growth, delivery, revenue, and engagement across your coaching business."
+        title={FOOTBALL_LABELS.analytics}
+        subtitle="See how training sessions, parent bookings, attendance, and academy income are performing."
       />
 
       {setupTables.length > 0 ? (
@@ -803,171 +911,270 @@ export function AnalyticsManager() {
         />
       ) : null}
 
-      {error ? (
-        <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
+      {error ? <FormErrorAlert message={error} /> : null}
 
       {loading ? (
-        <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Loading analytics...
-        </div>
+        <PanelSkeleton />
       ) : null}
 
       {!loading && !error && analytics ? (
         <>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <section
+            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
+            aria-label="Analytics summary"
+          >
             <StatCard
-              label="Total Players"
+              label="Players and parents"
               value={String(analytics.metrics.totalPlayers)}
-              hint="Active CRM records"
+              valueAriaLabel={`${analytics.metrics.totalPlayers} players and parents`}
+              hint="Families in your squad"
               icon={Users}
             />
             <StatCard
-              label="Total Teams"
+              label="Total teams"
               value={String(analytics.metrics.totalTeams)}
-              hint="Configured squads"
+              valueAriaLabel={`${analytics.metrics.totalTeams} teams`}
+              hint="Squads you coach"
               icon={Users}
             />
             <StatCard
-              label="Total Sessions"
+              label="Total sessions"
               value={String(analytics.metrics.totalSessions)}
-              hint="Scheduled sessions"
+              valueAriaLabel={`${analytics.metrics.totalSessions} sessions`}
+              hint="Sessions on your calendar"
               icon={CalendarClock}
             />
             <StatCard
-              label="Public Sessions"
+              label="Public sessions"
               value={String(analytics.metrics.publicSessions)}
-              hint="Bookable upcoming sessions"
+              valueAriaLabel={`${analytics.metrics.publicSessions} public sessions`}
+              hint="Sessions parents can book online"
               icon={CalendarClock}
             />
             <StatCard
-              label="Attendance Rate"
+              label="Attendance rate"
               value={percentage(analytics.metrics.attendanceRate)}
-              hint="Present or late marks"
+              valueAriaLabel={`${percentage(analytics.metrics.attendanceRate)} attendance rate`}
+              hint="How often players attend when marked on a register"
               icon={TrendingUp}
             />
             <StatCard
-              label="Missed Sessions"
+              label="Missed sessions"
               value={String(analytics.metrics.missedSessions)}
-              hint="Recorded absences"
+              valueAriaLabel={`${analytics.metrics.missedSessions} missed sessions`}
+              hint="Absences recorded on registers"
               icon={CalendarClock}
             />
             <StatCard
-              label="AI Reports Generated"
+              label="Player reports"
               value={String(analytics.metrics.reportsGenerated)}
-              hint="Saved progress reports"
+              valueAriaLabel={`${analytics.metrics.reportsGenerated} player reports`}
+              hint="Progress reports you have saved"
               icon={FileText}
             />
             <StatCard
-              label="Active Parent Subscriptions"
+              label="Active monthly payment plans"
               value={String(analytics.metrics.activeParentSubscriptions)}
-              hint="Stripe-backed plans"
+              valueAriaLabel={`${analytics.metrics.activeParentSubscriptions} active monthly payment plans`}
+              hint="Parents paying regularly each month"
               icon={PoundSterling}
             />
             <StatCard
-              label="Recurring Child Subscriptions"
+              label="Active weekly training packages"
               value={String(analytics.metrics.activeRecurringSubscriptions)}
-              hint="Series-backed weekly subscriptions"
+              valueAriaLabel={`${analytics.metrics.activeRecurringSubscriptions} active weekly training packages`}
+              hint="Families on weekly training packages"
               icon={Users}
             />
             <StatCard
-              label="Monthly Recurring Revenue"
+              label="Monthly income from regular payments"
               value={currency(analytics.metrics.mrr)}
-              hint="Normalised MRR"
+              valueAriaLabel={`${currency(analytics.metrics.mrr)} monthly income from regular payments`}
+              hint="Regular monthly payments from parents"
               icon={PoundSterling}
             />
             <StatCard
-              label="Recurring Series MRR"
+              label="Monthly income from weekly training packages"
               value={currency(analytics.metrics.recurringSubscriptionMrr)}
-              hint="Series-backed portion of MRR"
+              valueAriaLabel={`${currency(analytics.metrics.recurringSubscriptionMrr)} monthly income from weekly training packages`}
+              hint="Weekly package payments shown as a monthly amount"
               icon={PoundSterling}
             />
             <StatCard
-              label="Booking Revenue"
+              label="Income from bookings"
               value={currency(analytics.metrics.bookingRevenue)}
-              hint="Paid confirmed session bookings"
+              valueAriaLabel={`${currency(analytics.metrics.bookingRevenue)} income from bookings`}
+              hint="Paid session bookings"
               icon={PoundSterling}
             />
             <StatCard
-              label="Booking Conversion"
+              label="Parent booking rate"
               value={percentage(analytics.metrics.bookingConversion)}
-              hint="Confirmed vs all booking attempts"
+              valueAriaLabel={`${percentage(analytics.metrics.bookingConversion)} parent booking rate`}
+              hint="The percentage of parents who complete bookings"
               icon={TrendingUp}
             />
             <StatCard
-              label="Public Session Occupancy"
+              label="Session spaces filled"
               value={percentage(analytics.metrics.averagePublicOccupancy)}
-              hint={`${analytics.metrics.remainingPublicCapacity} spaces still open`}
+              valueAriaLabel={`${percentage(analytics.metrics.averagePublicOccupancy)} session spaces filled`}
+              hint="How full your sessions are on average"
               icon={TrendingUp}
             />
             <StatCard
-              label="Camp Revenue"
+              label="Camp income"
               value={currency(analytics.metrics.campRevenue)}
-              hint="Camp price x enrolments"
+              valueAriaLabel={`${currency(analytics.metrics.campRevenue)} camp income`}
+              hint="Income from camp enrolments"
               icon={PoundSterling}
             />
             <StatCard
-              label="Average Camp Occupancy"
+              label="Camp spaces filled"
               value={percentage(analytics.metrics.averageCampOccupancy)}
-              hint="Enrolled vs capacity"
+              valueAriaLabel={`${percentage(analytics.metrics.averageCampOccupancy)} camp spaces filled`}
+              hint="How full your camps are on average"
+              icon={TrendingUp}
+            />
+            <StatCard
+              label="Training hours planned"
+              value={`${analytics.metrics.trainingHours}h`}
+              valueAriaLabel={`${analytics.metrics.trainingHours} training hours planned`}
+              hint="Estimated from your active training plans"
+              icon={TrendingUp}
+            />
+            <StatCard
+              label="Training reflections completed"
+              value={String(analytics.metrics.trainingPlansCompleted)}
+              valueAriaLabel={`${analytics.metrics.trainingPlansCompleted} training reflections completed`}
+              hint="Plans with a saved post-session reflection"
+              icon={TrendingUp}
+            />
+            <StatCard
+              label="Profit this month"
+              value={formatFinanceCurrency(analytics.metrics.financeProfitThisMonth)}
+              valueAriaLabel={`${formatFinanceCurrency(analytics.metrics.financeProfitThisMonth)} profit this month`}
+              hint="Income minus expenses from Finance Centre"
+              icon={PoundSterling}
+            />
+            <StatCard
+              label="Expenses this month"
+              value={formatFinanceCurrency(analytics.metrics.financeExpensesThisMonth)}
+              valueAriaLabel={`${formatFinanceCurrency(analytics.metrics.financeExpensesThisMonth)} expenses this month`}
+              hint="Logged academy costs"
+              icon={PoundSterling}
+            />
+            <StatCard
+              label="Cash flow this month"
+              value={formatFinanceCurrency(analytics.metrics.financeCashFlowThisMonth)}
+              valueAriaLabel={`${formatFinanceCurrency(analytics.metrics.financeCashFlowThisMonth)} cash flow this month`}
+              hint="Income minus paid expenses"
+              icon={PoundSterling}
+            />
+            <StatCard
+              label="Video clips"
+              value={String(analytics.metrics.videoClipsTotal)}
+              valueAriaLabel={`${analytics.metrics.videoClipsTotal} video clips`}
+              hint={`${analytics.metrics.videoMatchClips} match · ${analytics.metrics.videoTrainingClips} training`}
+              icon={TrendingUp}
+            />
+            <StatCard
+              label="Shared clips"
+              value={String(analytics.metrics.videoSharedClips)}
+              valueAriaLabel={`${analytics.metrics.videoSharedClips} shared clips`}
+              hint="Clips visible to parents"
+              icon={TrendingUp}
+            />
+            <StatCard
+              label="Clip review completion"
+              value={percentage(analytics.metrics.videoReviewCompletion)}
+              valueAriaLabel={`${percentage(analytics.metrics.videoReviewCompletion)} clip review completion`}
+              hint="Reviewed clips as a share of all clips"
               icon={TrendingUp}
             />
           </section>
 
+          <section
+            className="football-panel football-panel-interactive rounded-2xl p-6 sm:p-7"
+            aria-labelledby="monthly-payment-income-explainer-heading"
+          >
+            <h2
+              id="monthly-payment-income-explainer-heading"
+              className="text-base font-semibold tracking-tight"
+            >
+              About monthly payment income
+            </h2>
+            <p className="text-muted mt-2 text-sm leading-relaxed">
+              Regular monthly payments from parents. Weekly payments are shown as a monthly amount
+              so you can compare different plans side by side.
+            </p>
+          </section>
+
           <section className="grid gap-6 xl:grid-cols-2">
             <MiniBarChart
-              title="Revenue over time"
+              titleId="income-over-time-heading"
+              title="Income over time"
               points={analytics.charts.revenue}
               formatter={currency}
               accent="bg-accent"
+              emptyMessage="Complete sessions and receive bookings to see trends."
             />
             <MiniBarChart
-              title="Attendance trends"
+              titleId="session-attendance-trend-heading"
+              title="Session attendance trend"
               points={analytics.charts.attendance}
               formatter={percentage}
               accent="bg-sky-500"
+              emptyMessage="Complete sessions and receive bookings to see trends."
             />
             <MiniBarChart
-              title="Public occupancy"
+              titleId="session-spaces-filled-heading"
+              title="Session spaces filled"
               points={analytics.charts.occupancy}
               formatter={percentage}
               accent="bg-emerald-500"
+              emptyMessage="Complete sessions and receive bookings to see trends."
             />
             <MiniBarChart
-              title="Session volume by month"
+              titleId="session-volume-heading"
+              title="Sessions by month"
               points={analytics.charts.sessions}
+              emptyMessage="Complete sessions and receive bookings to see trends."
               accent="bg-violet-500"
             />
             <MiniBarChart
-              title="Missed-session trends"
+              titleId="missed-sessions-heading"
+              title="Missed sessions by month"
               points={analytics.charts.missed}
+              emptyMessage="Complete sessions and receive bookings to see trends."
               accent="bg-rose-500"
             />
             <MiniBarChart
-              title="Reports generated by month"
+              titleId="player-reports-heading"
+              title="Player reports by month"
               points={analytics.charts.reports}
+              emptyMessage="Complete sessions and receive bookings to see trends."
               accent="bg-amber-500"
             />
           </section>
 
           <section className="grid gap-6 xl:grid-cols-3">
             <AttendanceBreakdownList
+              titleId="attendance-per-player-heading"
               title="Attendance per player"
               rows={analytics.breakdowns.players}
-              emptyMessage="Assigned players will appear here once sessions are linked."
+              emptyMessage="No booking information yet. Complete sessions and receive bookings to see trends."
             />
             <AttendanceBreakdownList
+              titleId="attendance-per-team-heading"
               title="Attendance per team"
               rows={analytics.breakdowns.teams}
-              emptyMessage="Linked teams will appear here once sessions are attached to squads."
+              emptyMessage="No booking information yet. Complete sessions and receive bookings to see trends."
             />
             <AttendanceBreakdownList
+              titleId="attendance-per-group-heading"
               title="Attendance per group"
               rows={analytics.breakdowns.groups}
-              emptyMessage="Named session groups will appear here once you start scheduling them."
+              emptyMessage="No booking information yet. Complete sessions and receive bookings to see trends."
             />
           </section>
         </>

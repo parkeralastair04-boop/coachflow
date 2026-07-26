@@ -1,22 +1,17 @@
 import { NextResponse } from "next/server";
-import {
-  buildBookingEmailHtml,
-  buildBookingEmailText,
-} from "@/lib/booking-emails";
-import { getResendServerClient, resendFromEmail } from "@/lib/resend";
-import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { createPublicSupabaseClient } from "@/lib/public-booking";
 import { getStripeServerClient } from "@/lib/stripe";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 type ConfirmBody = {
   checkoutSessionId?: string;
 };
 
-type ConfirmRpcRow = {
+type BookingStatusRow = {
   booking_id: string;
-  booking_status: "pending" | "confirmed" | "waitlist" | "cancelled";
-  payment_status: "requires_payment" | "paid" | "not_required" | "failed" | "refunded";
-  confirmed_now: boolean;
+  booking_status: string;
+  payment_status: string;
+  confirmed: boolean;
 };
 
 export const runtime = "nodejs";
@@ -30,20 +25,18 @@ function getErrorMessage(error: unknown) {
   ) {
     return error.message;
   }
-  return "Unable to confirm booking.";
-}
-
-function formatSessionDate(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "full",
-    timeStyle: "short",
-  }).format(parsed);
+  return "Unable to check booking confirmation.";
 }
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.publicBookingConfirm,
+      route: "/api/bookings/confirm",
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as ConfirmBody;
     const checkoutSessionId = body.checkoutSessionId?.trim();
 
@@ -51,12 +44,6 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: "checkoutSessionId is required." },
         { status: 400 },
-      );
-    }
-    if (!supabaseUrl || !supabaseAnonKey) {
-      return NextResponse.json(
-        { error: "Missing Supabase environment variables." },
-        { status: 500 },
       );
     }
 
@@ -70,87 +57,37 @@ export async function POST(request: Request) {
       );
     }
 
-    const bookingId = stripeSession.metadata?.booking_id?.trim();
-    if (!bookingId) {
-      return NextResponse.json(
-        { error: "Missing booking metadata on checkout session." },
-        { status: 500 },
-      );
-    }
+    const supabase = createPublicSupabaseClient();
 
-    const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey, {
-      auth: { persistSession: false },
-    });
-
-    const { data, error } = await supabase.rpc("confirm_public_session_booking", {
-      p_booking_id: bookingId,
-      p_stripe_checkout_session_id: stripeSession.id,
-      p_stripe_payment_intent_id:
-        typeof stripeSession.payment_intent === "string"
-          ? stripeSession.payment_intent
-          : "",
+    const { data, error } = await supabase.rpc("get_booking_confirmation_status", {
+      p_stripe_checkout_session_id: checkoutSessionId,
     });
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    const confirmed = (data?.[0] ?? null) as ConfirmRpcRow | null;
-    if (!confirmed) {
-      return NextResponse.json(
-        { error: "Could not reconcile booking confirmation." },
-        { status: 500 },
-      );
-    }
-
-    if (confirmed.confirmed_now && stripeSession.metadata?.parent_email) {
-      try {
-        const resend = getResendServerClient();
-        await resend.emails.send({
-          from: resendFromEmail,
-          to: stripeSession.metadata.parent_email,
-          subject: `Booking confirmed for ${stripeSession.metadata.child_name ?? "your player"}`,
-          html: buildBookingEmailHtml({
-            kind: "confirmed",
-            academyName: stripeSession.metadata.academy_name ?? "CoachFlow",
-            primaryColor:
-              stripeSession.metadata.academy_primary_color ?? "#10b981",
-            parentName: stripeSession.metadata.parent_name ?? "",
-            childName: stripeSession.metadata.child_name ?? "your player",
-            sessionLabel:
-              stripeSession.metadata.session_label ?? "Coaching session",
-            sessionDate: formatSessionDate(
-              stripeSession.metadata.session_date ?? new Date().toISOString(),
-            ),
-            location: stripeSession.metadata.session_location ?? "",
-          }),
-          text: buildBookingEmailText({
-            kind: "confirmed",
-            academyName: stripeSession.metadata.academy_name ?? "CoachFlow",
-            primaryColor:
-              stripeSession.metadata.academy_primary_color ?? "#10b981",
-            parentName: stripeSession.metadata.parent_name ?? "",
-            childName: stripeSession.metadata.child_name ?? "your player",
-            sessionLabel:
-              stripeSession.metadata.session_label ?? "Coaching session",
-            sessionDate: formatSessionDate(
-              stripeSession.metadata.session_date ?? new Date().toISOString(),
-            ),
-            location: stripeSession.metadata.session_location ?? "",
-          }),
-        });
-      } catch {
-        // Payment confirmation should not fail if email delivery is unavailable.
-      }
+    const status = (data?.[0] ?? null) as BookingStatusRow | null;
+    if (!status || !status.confirmed) {
+      return NextResponse.json({
+        confirmed: false,
+        pending: true,
+      });
     }
 
     return NextResponse.json({
-      bookingId: confirmed.booking_id,
-      status: confirmed.booking_status,
-      paymentStatus: confirmed.payment_status,
-      confirmedNow: confirmed.confirmed_now,
+      confirmed: true,
+      bookingStatus: status.booking_status,
+      paymentStatus: status.payment_status,
+      bookingId: status.booking_id,
     });
   } catch (error: unknown) {
+    if (
+      error instanceof Error &&
+      error.message === "Missing Supabase environment variables."
+    ) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
   }
 }

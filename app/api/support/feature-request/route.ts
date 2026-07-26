@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import {
   getSetupRequiredMessage,
   isMissingTableError,
@@ -13,6 +14,13 @@ type FeatureRequestBody = {
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.support,
+      route: "/api/support/feature-request",
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as FeatureRequestBody;
     const featureName = body.featureName?.trim() ?? "";
     const description = body.description?.trim() ?? "";

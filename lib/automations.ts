@@ -37,7 +37,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Email parents before an upcoming coaching session.",
     defaultSubject: "Reminder: {player_name}'s session is tomorrow",
     defaultTemplate:
-      "Hi {parent_name},\n\nJust a quick reminder that {player_name} has a coaching session coming up on {session_date}.\n\nSee you soon,\nCoachFlow",
+      "Hi {parent_name},\n\nJust a quick reminder that {player_name} has a coaching session coming up on {session_date}.\n\nSee you soon,\nAwarix",
     defaultTimingOffset: 24,
     offsetLabel: "Hours before session",
   },
@@ -47,7 +47,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Nudge parents before a subscription payment is due.",
     defaultSubject: "Upcoming payment for {player_name}",
     defaultTemplate:
-      "Hi {parent_name},\n\nThis is a friendly reminder that the next payment for {player_name} is due on {due_date}.\n\nThanks,\nCoachFlow",
+      "Hi {parent_name},\n\nThis is a friendly reminder that the next payment for {player_name} is due on {due_date}.\n\nThanks,\nAwarix",
     defaultTimingOffset: 3,
     offsetLabel: "Days before due date",
   },
@@ -57,7 +57,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Send a friendly birthday message to players and parents.",
     defaultSubject: "Happy birthday, {player_name}!",
     defaultTemplate:
-      "Hi {parent_name},\n\nEveryone at the academy wishes {player_name} a brilliant birthday. Have a fantastic day!\n\nCoachFlow",
+      "Hi {parent_name},\n\nEveryone at the academy wishes {player_name} a brilliant birthday. Have a fantastic day!\n\nAwarix",
     defaultTimingOffset: 0,
     offsetLabel: "Days offset",
   },
@@ -67,7 +67,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Follow up after an AI progress report has been generated.",
     defaultSubject: "Following up on {player_name}'s latest report",
     defaultTemplate:
-      "Hi {parent_name},\n\nWe hope {player_name}'s latest progress report was useful. Please reply if you have any questions or goals you would like us to focus on.\n\nCoachFlow",
+      "Hi {parent_name},\n\nWe hope {player_name}'s latest progress report was useful. Please reply if you have any questions or goals you would like us to focus on.\n\nAwarix",
     defaultTimingOffset: 2,
     offsetLabel: "Days after report",
   },
@@ -77,7 +77,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Alert parents after two missed sessions.",
     defaultSubject: "Attendance check-in for {player_name}",
     defaultTemplate:
-      "Hi {parent_name},\n\nWe noticed {player_name} has missed the last two sessions. Please let us know if there is anything we can help with.\n\nCoachFlow",
+      "Hi {parent_name},\n\nWe noticed {player_name} has missed the last two sessions. Please let us know if there is anything we can help with.\n\nAwarix",
     defaultTimingOffset: 2,
     offsetLabel: "Missed sessions threshold",
   },
@@ -87,7 +87,7 @@ export const DEFAULT_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
     description: "Remind parents before a subscription renews.",
     defaultSubject: "{player_name}'s subscription renews soon",
     defaultTemplate:
-      "Hi {parent_name},\n\n{player_name}'s coaching subscription renews on {due_date}. Thanks for being part of the academy.\n\nCoachFlow",
+      "Hi {parent_name},\n\n{player_name}'s coaching subscription renews on {due_date}. Thanks for being part of the academy.\n\nAwarix",
     defaultTimingOffset: 7,
     offsetLabel: "Days before renewal",
   },

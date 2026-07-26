@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import {
   ensureStripeCustomerForParent,
   loadPlayerForCoach,
   type ParentPlayerRow,
   requireParentPaymentsAccess,
 } from "@/lib/parent-payments";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type CreateCustomerBody = {
   playerId?: string;
@@ -14,6 +16,16 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.paymentsWrite,
+      route: "/api/payments/create-customer",
+    });
+    if (limited) return limited;
+
+    const demoBlocked = rejectDemoMutation(request, "create a Stripe customer");
+    if (demoBlocked) return demoBlocked;
+
     const access = await requireParentPaymentsAccess();
     if (!access.ok) return access.response;
 

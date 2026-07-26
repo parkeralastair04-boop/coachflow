@@ -16,4 +16,4 @@ export function getResendServerClient() {
 }
 
 export const resendFromEmail =
-  process.env.RESEND_FROM_EMAIL ?? "CoachFlow <onboarding@resend.dev>";
+  process.env.RESEND_FROM_EMAIL ?? "Awarix <onboarding@resend.dev>";

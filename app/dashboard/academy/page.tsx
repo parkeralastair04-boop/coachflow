@@ -3,7 +3,7 @@ import { FeatureGate } from "@/components/feature-gate";
 import { AcademySettingsManager } from "@/components/academy-settings-manager";
 
 export const metadata: Metadata = {
-  title: "Academy Settings",
+  title: "Club Identity",
 };
 
 export default function AcademySettingsPage() {

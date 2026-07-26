@@ -1,8 +1,15 @@
+import { cache } from "react";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type {
   PublicRecurringSeriesRow,
   PublicSessionRow,
 } from "@/lib/booking-system";
+import { isDemoTenantSlug } from "@/lib/demo/constants";
+import {
+  getDemoPublicPortal,
+  getDemoRecurringSeries,
+  getDemoSessions,
+} from "@/lib/demo/data";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
 export type PublicPortal = {
@@ -16,6 +23,7 @@ export type PublicPortal = {
   primary_color: string;
   secondary_color: string;
   support_email: string | null;
+  support_phone?: string | null;
   booking_enabled: boolean;
 };
 
@@ -43,33 +51,53 @@ export function getPortalQueryValue(tenant: PublicPortalTenant): string {
   return `${tenant.kind}Slug=${encodeURIComponent(tenant.slug)}`;
 }
 
+const resolvePublicPortalCached = cache(
+  async (kind: PublicPortalTenant["kind"], slug: string): Promise<PublicPortal | null> => {
+    if (isDemoTenantSlug(kind, slug)) {
+      return getDemoPublicPortal();
+    }
+
+    const supabase = createPublicSupabaseClient();
+    const { data, error } =
+      kind === "coach"
+        ? await supabase.rpc("get_public_portal_by_coach_slug", {
+            p_slug: slug,
+          })
+        : await supabase.rpc("get_public_portal_by_academy_slug", {
+            p_slug: slug,
+          });
+
+    if (error) {
+      throw error;
+    }
+
+    if (!Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+
+    return data[0] as PublicPortal;
+  },
+);
+
 export async function resolvePublicPortal(
   tenant: PublicPortalTenant,
 ): Promise<PublicPortal | null> {
-  const supabase = createPublicSupabaseClient();
-  const { data, error } =
-    tenant.kind === "coach"
-      ? await supabase.rpc("get_public_portal_by_coach_slug", {
-          p_slug: tenant.slug,
-        })
-      : await supabase.rpc("get_public_portal_by_academy_slug", {
-          p_slug: tenant.slug,
-        });
-
-  if (error) {
-    throw error;
-  }
-
-  if (!Array.isArray(data) || data.length === 0) {
-    return null;
-  }
-
-  return data[0] as PublicPortal;
+  return resolvePublicPortalCached(tenant.kind, tenant.slug);
 }
 
 export async function loadPublicBookingPayload(
   tenant: PublicPortalTenant,
 ): Promise<PublicBookingPayload | null> {
+  if (isDemoTenantSlug(tenant.kind, tenant.slug)) {
+    return {
+      portal: getDemoPublicPortal(),
+      sessions: getDemoSessions().filter(
+        (session) => new Date(session.session_date).getTime() >= Date.now() - 60_000,
+      ),
+      recurringSeries: getDemoRecurringSeries(),
+    };
+  }
+
   const supabase = createPublicSupabaseClient();
   const portal = await resolvePublicPortal(tenant);
 

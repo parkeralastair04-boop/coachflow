@@ -7,6 +7,7 @@ import {
   type ParentSubscriptionRow,
   requireParentPaymentsAccess,
 } from "@/lib/parent-payments";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
@@ -44,6 +45,7 @@ export async function GET() {
     const players = (playersData ?? []) as ParentPlayerRow[];
     const subscriptions = (subscriptionData ?? []) as ParentSubscriptionRow[];
     const stripe = getStripeServerClient();
+    const admin = createAdminClient();
 
     const refreshedSubscriptions = await Promise.all(
       subscriptions.map(async (subscription) => {
@@ -60,7 +62,7 @@ export async function GET() {
             status !== subscription.status ||
             currentPeriodEnd !== subscription.current_period_end
           ) {
-            await access.supabase.rpc("sync_recurring_subscription_state", {
+            await admin.rpc("sync_recurring_subscription_state", {
               p_stripe_subscription_id: subscription.stripe_subscription_id,
               p_status: status,
               p_current_period_end: currentPeriodEnd,

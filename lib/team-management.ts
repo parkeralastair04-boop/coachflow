@@ -124,6 +124,21 @@ function compareBySquadOrder(a: TeamPlayerMembership, b: TeamPlayerMembership) {
   return a.squad_order - b.squad_order || compareByName(a, b);
 }
 
+function compareByRole(a: TeamPlayerMembership, b: TeamPlayerMembership): number {
+  const roleRank = (role: TeamPlayerMembership["role"]) => {
+    if (role === "captain") return 0;
+    if (role === "vice_captain") return 1;
+    return 2;
+  };
+  return roleRank(a.role) - roleRank(b.role) || compareBySquadOrder(a, b);
+}
+
+export function sortSquadDisplayOrder(
+  memberships: TeamPlayerMembership[],
+): TeamPlayerMembership[] {
+  return [...memberships].sort(compareByRole);
+}
+
 export function sortTeamMemberships(
   memberships: TeamPlayerMembership[],
   sortBy: TeamSortOption,

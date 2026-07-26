@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { FEEDBACK_CATEGORIES, isFeedbackCategory } from "@/lib/product-feedback";
 import {
   getSetupRequiredMessage,
@@ -27,6 +28,13 @@ function parseRating(value: unknown): number | null {
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.support,
+      route: "/api/support/feedback",
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as FeedbackBody;
     const category = body.category?.trim() ?? "";
     const rating = parseRating(body.rating);

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
+  Clock,
   Copy,
   CreditCard,
   ExternalLink,
@@ -11,10 +13,23 @@ import {
   Phone,
   PoundSterling,
   RefreshCw,
-  UserRound,
+  XCircle,
 } from "lucide-react";
-import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
+import { FeaturePageHeader } from "@/components/feature-page-header";
+import { Button } from "@/components/ui/button";
+import { FormErrorAlert } from "@/components/form-error-alert";
+import { EmptyState } from "@/components/empty-state";
+import { footballEmptyPreset } from "@/lib/football-identity";
+import {
+  getSubscriptionStatusLabel,
+  getSubscriptionStatusHelperCopy,
+  PAYMENT_STATUS_HELPER_COPY,
+  subscriptionNeedsAttention,
+} from "@/lib/payment-status-labels";
+import { isValidSubscriptionAmount } from "@/lib/validation/amounts";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
 import { cn } from "@/lib/utils";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type BillingInterval = "monthly" | "weekly";
 
@@ -59,6 +74,13 @@ const failedStatuses = new Set([
   "canceled",
 ]);
 
+function getSubscriptionStatusPresentation(status: string) {
+  return {
+    label: getSubscriptionStatusLabel(status),
+    needsAttention: subscriptionNeedsAttention(status),
+  };
+}
+
 function formatMoney(amount: number, currency: string): string {
   return new Intl.NumberFormat("en-GB", {
     style: "currency",
@@ -76,15 +98,7 @@ function formatDate(value: string | null): string {
 }
 
 function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
+  return sanitizeDashboardSaveError(error, { logLabel: "payments" });
 }
 
 function statusTone(status: string): string {
@@ -98,6 +112,19 @@ function statusTone(status: string): string {
     return "bg-red-500/10 text-red-700 ring-red-500/25 dark:text-red-300";
   }
   return "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300";
+}
+
+function SubscriptionStatusIcon({ status }: { status: string }) {
+  if (status === "active" || status === "trialing" || status === "customer_created") {
+    return <CheckCircle2 className="mr-1 size-3 shrink-0" aria-hidden />;
+  }
+  if (failedStatuses.has(status)) {
+    return <XCircle className="mr-1 size-3 shrink-0" aria-hidden />;
+  }
+  if (status === "incomplete") {
+    return <Clock className="mr-1 size-3 shrink-0" aria-hidden />;
+  }
+  return <AlertTriangle className="mr-1 size-3 shrink-0" aria-hidden />;
 }
 
 function isOverdue(subscription: ParentSubscription): boolean {
@@ -138,6 +165,12 @@ export function PaymentsManager() {
     [players, selectedPlayerId],
   );
 
+  const paymentActionInProgress =
+    creatingCustomerId !== null ||
+    creatingSubscription ||
+    creatingCheckoutLink ||
+    sendingCheckoutLink;
+
   const loadPayments = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
     else setLoading(true);
@@ -146,7 +179,7 @@ export function PaymentsManager() {
       const response = await fetch("/api/payments/list-subscriptions");
       const payload = (await response.json()) as PaymentsResponse;
       if (!response.ok) {
-        setError(payload.error ?? "Unable to load parent payments.");
+        setError(sanitizeDashboardSaveError(payload.error, { logLabel: "payments-load" }));
         return;
       }
 
@@ -185,13 +218,17 @@ export function PaymentsManager() {
         error?: string;
       };
       if (!response.ok) {
-        setError(payload.error ?? "Could not create Stripe customer.");
+        setError(
+          sanitizeDashboardSaveError(payload.error, { logLabel: "payments-create-profile" }),
+        );
         return;
       }
-      setSuccess("Stripe customer created for parent.");
+      setSuccess("Parent payment setup complete.");
       await loadPayments(true);
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(
+        sanitizeDashboardSaveError(caughtError, { logLabel: "payments-create-profile" }),
+      );
     } finally {
       setCreatingCustomerId(null);
     }
@@ -204,7 +241,7 @@ export function PaymentsManager() {
     }
 
     const amountInPence = Math.round(Number.parseFloat(amount) * 100);
-    if (!Number.isFinite(amountInPence) || amountInPence < 100) {
+    if (!isValidSubscriptionAmount(amountInPence)) {
       setError("Enter a valid amount of at least £1.00.");
       return;
     }
@@ -227,13 +264,15 @@ export function PaymentsManager() {
         error?: string;
       };
       if (!response.ok) {
-        setError(payload.error ?? "Could not create subscription.");
+        setError(
+          sanitizeDashboardSaveError(payload.error, { logLabel: "payments-create-subscription" }),
+        );
         return;
       }
-      setSuccess("Subscription created and assigned to player.");
+      setSuccess("Monthly payment plan created and assigned to player.");
       await loadPayments(true);
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "payments-create-subscription" }));
     } finally {
       setCreatingSubscription(false);
     }
@@ -246,7 +285,7 @@ export function PaymentsManager() {
     }
 
     const amountInPence = Math.round(Number.parseFloat(amount) * 100);
-    if (!Number.isFinite(amountInPence) || amountInPence < 100) {
+    if (!isValidSubscriptionAmount(amountInPence)) {
       setError("Enter a valid amount of at least £1.00.");
       return null;
     }
@@ -281,18 +320,26 @@ export function PaymentsManager() {
         error?: string;
       };
       if (!response.ok || !payload.url) {
-        setError(payload.error ?? "Could not create checkout link.");
+        setError(
+          sanitizeDashboardSaveError(payload.error, {
+            logLabel: sendEmail ? "payments-send-checkout" : "payments-create-checkout",
+          }),
+        );
         return;
       }
 
       setCheckoutUrl(payload.url);
       setSuccess(
         payload.emailed
-          ? "Checkout link created and emailed to parent."
-          : "Checkout link created.",
+          ? "Secure payment link created and emailed to parent."
+          : "Secure payment link created.",
       );
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(
+        sanitizeDashboardSaveError(caughtError, {
+          logLabel: sendEmail ? "payments-send-checkout" : "payments-create-checkout",
+        }),
+      );
     } finally {
       setCreatingCheckoutLink(false);
       setSendingCheckoutLink(false);
@@ -304,65 +351,55 @@ export function PaymentsManager() {
     try {
       await navigator.clipboard.writeText(checkoutUrl);
       setCopiedCheckoutLink(true);
-      setSuccess("Checkout link copied.");
+      setSuccess("Secure payment link copied.");
     } catch {
-      setError("Could not copy checkout link. Please copy it manually.");
+      setError("Could not copy the payment link. Please copy it manually.");
     }
   }
 
   return (
-    <div className="space-y-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              Parent payments
-            </h1>
-            <FeatureInfoTooltip featureKey="payments" />
-          </div>
-          <p className="text-muted mt-1 text-sm">
-            Create parent Stripe customers, assign recurring subscriptions to
-            players, and spot failed payments quickly.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void loadPayments(true)}
-          disabled={loading || refreshing}
-          className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
-        >
-          {refreshing ? (
-            <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="mr-2 size-4" aria-hidden />
-          )}
-          Refresh
-        </button>
-      </div>
+    <div className="page-content-enter space-y-10">
+      <FeaturePageHeader
+        featureKey="payments"
+        title="Parent payments"
+        subtitle="Set up parent payments, manage monthly payment plans, and spot failed payments quickly."
+        actions={
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void loadPayments(true)}
+            disabled={loading || refreshing}
+          >
+            {refreshing ? (
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="size-4" aria-hidden />
+            )}
+            Refresh
+          </Button>
+        }
+      />
 
-      {error ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
+      {error ? <FormErrorAlert message={error} /> : null}
       {success ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-accent">
+        <div className="football-panel football-panel-interactive rounded-2xl p-5 text-sm text-accent">
           {success}
         </div>
       ) : null}
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <PoundSterling className="text-accent size-5" aria-hidden />
           </div>
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
-              Create subscription
+              Set up a monthly payment plan
             </h2>
             <p className="text-muted mt-1 text-sm">
-              Choose a player, billing cadence, and custom amount. Stripe will
-              create recurring invoices for the parent customer.
+              Choose a player, payment frequency, and amount. Parents complete payment through a
+              secure payment link.
             </p>
           </div>
         </div>
@@ -377,7 +414,7 @@ export function PaymentsManager() {
               value={selectedPlayerId}
               disabled={loading || players.length === 0}
               onChange={(e) => setSelectedPlayerId(e.target.value)}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 disabled:opacity-70 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 disabled:opacity-70 dark:ring-offset-background"
             >
               {players.length === 0 ? (
                 <option value="">No players available</option>
@@ -393,13 +430,13 @@ export function PaymentsManager() {
 
           <div>
             <label className="mb-2 block text-sm font-medium" htmlFor="interval">
-              Billing interval
+              Payment frequency
             </label>
             <select
               id="interval"
               value={interval}
               onChange={(e) => setInterval(e.target.value as BillingInterval)}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             >
               <option value="monthly">Monthly</option>
               <option value="weekly">Weekly</option>
@@ -416,7 +453,7 @@ export function PaymentsManager() {
               inputMode="decimal"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="49.00"
             />
           </div>
@@ -424,9 +461,9 @@ export function PaymentsManager() {
           <div className="flex items-end">
             <button
               type="button"
-              disabled={creatingSubscription || !selectedPlayer}
+              disabled={paymentActionInProgress || !selectedPlayer}
               onClick={() => void createSubscription()}
-              className="bg-foreground text-background hover:opacity-90 inline-flex h-11 w-full items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
+              className="bg-foreground text-background hover:opacity-90 focus-visible:ring-accent/40 inline-flex h-11 w-full items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
             >
               {creatingSubscription ? (
                 <>
@@ -436,7 +473,7 @@ export function PaymentsManager() {
               ) : (
                 <>
                   <CreditCard className="mr-2 size-4" aria-hidden />
-                  Create Subscription
+                  Create monthly payment plan
                 </>
               )}
             </button>
@@ -457,18 +494,18 @@ export function PaymentsManager() {
         ) : null}
       </section>
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <ExternalLink className="text-accent size-5" aria-hidden />
           </div>
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
-              Create Payment Link
+              Create parent payment link
             </h2>
             <p className="text-muted mt-1 text-sm">
-              Generate a secure Stripe Checkout URL parents can open to add
-              their payment method and start recurring payments.
+              Create a secure payment link parents can open to add their payment details and start
+              regular monthly payments.
             </p>
           </div>
         </div>
@@ -477,8 +514,8 @@ export function PaymentsManager() {
           <button
             type="button"
             onClick={() => void createCheckoutLink(false)}
-            disabled={creatingCheckoutLink || sendingCheckoutLink || !selectedPlayer}
-            className="bg-accent text-white hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity disabled:opacity-60"
+            disabled={paymentActionInProgress || !selectedPlayer}
+            className="bg-accent text-white hover:opacity-90 focus-visible:ring-accent/40 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
           >
             {creatingCheckoutLink ? (
               <>
@@ -488,7 +525,7 @@ export function PaymentsManager() {
             ) : (
               <>
                 <ExternalLink className="mr-2 size-4" aria-hidden />
-                Create Payment Link
+                Create secure payment link
               </>
             )}
           </button>
@@ -496,11 +533,10 @@ export function PaymentsManager() {
             type="button"
             onClick={() => void createCheckoutLink(true)}
             disabled={
-              creatingCheckoutLink ||
-              sendingCheckoutLink ||
+              paymentActionInProgress ||
               !selectedPlayer?.parent_email
             }
-            className="border-border hover:bg-black/[0.03] inline-flex h-11 items-center justify-center rounded-full border px-6 text-sm font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+            className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex h-11 items-center justify-center rounded-full border px-6 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60 dark:hover:bg-white/[0.06]"
           >
             {sendingCheckoutLink ? (
               <>
@@ -510,7 +546,7 @@ export function PaymentsManager() {
             ) : (
               <>
                 <Mail className="mr-2 size-4" aria-hidden />
-                Send by Email
+                Send payment link
               </>
             )}
           </button>
@@ -523,7 +559,7 @@ export function PaymentsManager() {
               <button
                 type="button"
                 onClick={() => void copyCheckoutLink()}
-                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex h-10 items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:hover:bg-white/[0.06]"
               >
                 <Copy className="mr-2 size-4" aria-hidden />
                 {copiedCheckoutLink ? "Copied" : "Copy Link"}
@@ -532,7 +568,7 @@ export function PaymentsManager() {
                 href={checkoutUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="bg-foreground text-background hover:opacity-90 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity"
+                className="bg-foreground text-background hover:opacity-90 focus-visible:ring-accent/40 inline-flex h-10 items-center justify-center rounded-full px-5 text-sm font-medium transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <ExternalLink className="mr-2 size-4" aria-hidden />
                 Open Link
@@ -553,20 +589,19 @@ export function PaymentsManager() {
         </div>
 
         {loading ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading parent payments...
-          </div>
+          <PanelSkeleton />
         ) : null}
 
         {!loading && players.length === 0 ? (
-          <div className="glass-panel rounded-2xl p-8 text-center">
-            <UserRound className="text-muted mx-auto size-8" aria-hidden />
-            <p className="mt-3 font-medium">No players yet</p>
-            <p className="text-muted mt-1 text-sm">
-              Add players with parent details before creating payment plans.
-            </p>
-          </div>
+          <EmptyState
+            {...footballEmptyPreset("players")}
+            actionLabel="Add players"
+            actionHref="/dashboard/players"
+          />
+        ) : null}
+
+        {!loading && players.length > 0 && subscriptions.length === 0 ? (
+          <EmptyState {...footballEmptyPreset("payments")} />
         ) : null}
 
         {!loading && players.length > 0 ? (
@@ -583,7 +618,7 @@ export function PaymentsManager() {
               return (
                 <article
                   key={player.id}
-                  className="glass-panel rounded-2xl p-5 sm:p-6"
+                  className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -598,16 +633,16 @@ export function PaymentsManager() {
                       type="button"
                       onClick={() => void createCustomer(player.id)}
                       disabled={
-                        creatingCustomerId === player.id ||
+                        paymentActionInProgress ||
                         !player.parent_email ||
                         hasCustomer
                       }
-                      className="border-border hover:bg-black/[0.03] inline-flex h-9 items-center justify-center rounded-full border px-3 text-xs font-medium transition-colors disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                      className="border-border hover:bg-surface-hover focus-visible:ring-accent/40 inline-flex h-9 items-center justify-center rounded-full border px-3 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60 dark:hover:bg-white/[0.06]"
                     >
                       {creatingCustomerId === player.id ? (
                         <Loader2 className="mr-2 size-3.5 animate-spin" aria-hidden />
                       ) : null}
-                      {hasCustomer ? "Customer ready" : "Create customer"}
+                      {hasCustomer ? "Parent payment setup complete" : "Set up parent payments"}
                     </button>
                   </div>
 
@@ -626,31 +661,39 @@ export function PaymentsManager() {
                     <div className="mt-5 rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
                       <div className="flex flex-wrap items-center gap-2">
                         <span
+                          role="status"
+                          aria-live="polite"
                           className={cn(
-                            "inline-flex rounded-full px-2.5 py-1 text-xs font-medium ring-1",
+                            "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ring-1",
                             statusTone(latestSubscription.status),
                           )}
                         >
-                          {latestSubscription.status}
+                          <SubscriptionStatusIcon status={latestSubscription.status} />
+                          {getSubscriptionStatusPresentation(latestSubscription.status).label}
                         </span>
-                        {isOverdue(latestSubscription) ? (
-                          <span className="inline-flex items-center rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-700 ring-1 ring-red-500/25 dark:text-red-300">
+                        {getSubscriptionStatusPresentation(latestSubscription.status)
+                          .needsAttention || isOverdue(latestSubscription) ? (
+                          <span
+                            role="status"
+                            aria-live="polite"
+                            className="inline-flex items-center rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-800 ring-1 ring-red-500/25 dark:text-red-200"
+                          >
                             <AlertTriangle
                               className="mr-1 size-3"
                               aria-hidden
                             />
-                            overdue / failed
+                            Needs attention
                           </span>
                         ) : null}
                         <span className="border-border text-muted inline-flex rounded-full border px-2.5 py-1 text-xs font-medium">
                           {latestSubscription.subscription_kind === "recurring_series"
-                            ? "Series-backed"
-                            : "Manual"}
+                            ? "Weekly training package"
+                            : "Custom monthly plan"}
                         </span>
                       </div>
                       {latestSubscription.subscription_kind === "recurring_series" ? (
                         <p className="text-muted mt-3 text-xs">
-                          {getSeriesTitle(latestSubscription) ?? "Recurring coaching series"}
+                          {getSeriesTitle(latestSubscription) ?? "Weekly training package"}
                         </p>
                       ) : null}
                       <dl className="mt-4 grid grid-cols-2 gap-3">
@@ -664,7 +707,7 @@ export function PaymentsManager() {
                           </dd>
                         </div>
                         <div>
-                          <dt className="text-muted text-xs">Interval</dt>
+                          <dt className="text-muted text-xs">Monthly payment</dt>
                           <dd className="mt-1 font-medium capitalize">
                             {latestSubscription.interval ?? "N/A"}
                           </dd>
@@ -676,10 +719,22 @@ export function PaymentsManager() {
                           </dd>
                         </div>
                       </dl>
+                      {getSubscriptionStatusPresentation(latestSubscription.status)
+                        .needsAttention ? (
+                        <div className="text-muted mt-4 space-y-1 text-xs leading-relaxed">
+                          <p>
+                            {getSubscriptionStatusHelperCopy(latestSubscription.status) ??
+                              PAYMENT_STATUS_HELPER_COPY}
+                          </p>
+                          <p className="text-muted/80 text-[11px]">
+                            Payment status: {latestSubscription.status}
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   ) : (
                     <p className="text-muted mt-5 rounded-2xl bg-black/[0.02] p-4 text-sm dark:bg-white/[0.03]">
-                      No subscription assigned yet.
+                      No monthly payment plan yet.
                     </p>
                   )}
                 </article>

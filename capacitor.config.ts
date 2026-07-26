@@ -1,15 +1,15 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.coachflow.app",
-  appName: "CoachFlow",
+  appId: "com.awarix.app",
+  appName: "Awarix",
   webDir: "public",
   server: {
-    url: process.env.CAPACITOR_SERVER_URL ?? "https://coachflow.website",
+    url: process.env.CAPACITOR_SERVER_URL ?? "https://awarix.co.uk",
     cleartext: false,
     allowNavigation: [
-      "coachflow.website",
-      "*.coachflow.website",
+      "awarix.co.uk",
+      "*.awarix.co.uk",
       "*.supabase.co",
       "checkout.stripe.com",
       "billing.stripe.com",

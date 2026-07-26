@@ -1,12 +1,23 @@
 import Link from "next/link";
+import {
+  TRIAL_PERIOD_DAYS,
+  addTrialDays,
+  formatUkLongDate,
+} from "@/lib/trial-copy";
 
 export default function BillingSuccessPage() {
+  const trialEndsAt = addTrialDays(new Date(), TRIAL_PERIOD_DAYS);
+
   return (
     <div className="mesh-gradient flex min-h-screen items-center justify-center px-4">
       <div className="glass-panel w-full max-w-lg rounded-3xl p-8 text-center sm:p-10">
-        <h1 className="text-3xl font-semibold tracking-tight">Subscription active</h1>
+        <h1 className="text-3xl font-semibold tracking-tight">Trial started</h1>
         <p className="text-muted mt-3 text-sm sm:text-base">
-          Your CoachFlow subscription was created successfully in Stripe.
+          You won&apos;t be charged today. Your first payment will be collected on{" "}
+          {formatUkLongDate(trialEndsAt)} unless you cancel before then.
+        </p>
+        <p className="text-muted mt-3 text-sm">
+          Cancel anytime from Billing during your {TRIAL_PERIOD_DAYS}-day trial.
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link

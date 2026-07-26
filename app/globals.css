@@ -1,17 +1,28 @@
 @import "tailwindcss";
 
 :root {
+  /* Surfaces */
   --background: #fafafa;
   --foreground: #0f172a;
   --muted: #64748b;
   --border: rgba(15, 23, 42, 0.1);
   --card: rgba(255, 255, 255, 0.82);
-  --accent: #10b981;
-  --accent-dim: rgba(16, 185, 129, 0.12);
-  --ring-glow: rgba(16, 185, 129, 0.35);
+  /* Brand — pitch green + stadium lighting */
+  --accent: #059669;
+  --accent-foreground: #ffffff;
+  --accent-dim: rgba(5, 150, 105, 0.12);
+  --ring-glow: rgba(5, 150, 105, 0.35);
+  --pitch-line: rgba(5, 150, 105, 0.14);
+  --pitch-turf: rgba(5, 150, 105, 0.06);
+  --tactical-dot: rgba(5, 150, 105, 0.18);
   --navy: #0f172a;
   --surface-subtle: rgba(15, 23, 42, 0.04);
   --surface-hover: rgba(15, 23, 42, 0.06);
+  /* Motion (keep in sync with lib/ui/tokens.ts) */
+  --motion-fast: 150ms;
+  --motion-base: 180ms;
+  --motion-slow: 220ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
   color-scheme: light;
 }
 
@@ -21,8 +32,11 @@
   --muted: #a3a3a3;
   --border: rgba(255, 255, 255, 0.08);
   --card: rgba(12, 12, 14, 0.75);
-  --accent-dim: rgba(16, 185, 129, 0.14);
-  --ring-glow: rgba(16, 185, 129, 0.45);
+  --accent-dim: rgba(5, 150, 105, 0.14);
+  --ring-glow: rgba(5, 150, 105, 0.45);
+  --pitch-line: rgba(5, 150, 105, 0.22);
+  --pitch-turf: rgba(5, 150, 105, 0.08);
+  --tactical-dot: rgba(5, 150, 105, 0.28);
   --surface-subtle: rgba(255, 255, 255, 0.03);
   --surface-hover: rgba(255, 255, 255, 0.06);
   color-scheme: dark;
@@ -35,6 +49,7 @@
   --color-border: var(--border);
   --color-card: var(--card);
   --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
   --color-navy: var(--navy);
   --color-surface-subtle: var(--surface-subtle);
   --color-surface-hover: var(--surface-hover);
@@ -51,8 +66,8 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   transition:
-    background-color 0.25s ease,
-    color 0.25s ease;
+    background-color var(--motion-slow) ease,
+    color var(--motion-slow) ease;
 }
 
 .glass-panel {
@@ -60,26 +75,79 @@ body {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
   border: 1px solid var(--border);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 8%, transparent),
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 8px 28px -18px rgba(15, 23, 42, 0.08);
   transition:
-    background-color 0.25s ease,
-    border-color 0.25s ease;
+    background-color var(--motion-slow) ease,
+    border-color var(--motion-slow) ease,
+    box-shadow var(--motion-slow) var(--motion-ease),
+    transform var(--motion-slow) var(--motion-ease);
+}
+
+.dark .glass-panel {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 10px 36px -18px rgba(0, 0, 0, 0.5);
+}
+
+/* Clickable / hoverable cards — unified 2px lift (Linear / Stripe style) */
+.interactive-surface {
+  transition:
+    transform var(--motion-slow) var(--motion-ease),
+    box-shadow var(--motion-slow) var(--motion-ease),
+    border-color var(--motion-slow) ease;
+}
+
+.interactive-surface:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 16px 40px -20px rgba(15, 23, 42, 0.16);
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+}
+
+/* Glass panels with interactive surface inherit football hover styling */
+.glass-panel.interactive-surface {
+  background: color-mix(in srgb, var(--card) 96%, var(--accent) 4%);
+  border-color: color-mix(in srgb, var(--accent) 12%, var(--border));
+}
+
+.glass-panel.interactive-surface:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 16%, transparent),
+    0 18px 40px -20px rgba(5, 150, 105, 0.18);
+}
+
+.dark .interactive-surface:hover {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 18px 42px -22px rgba(0, 0, 0, 0.6);
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
 }
 
 .mesh-gradient {
   background:
     radial-gradient(
-      ellipse 120% 80% at 20% -20%,
-      rgba(16, 185, 129, 0.14),
-      transparent 55%
+      ellipse 140% 90% at 15% -25%,
+      rgba(5, 150, 105, 0.16),
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse 90% 70% at 92% 5%,
+      rgba(251, 191, 36, 0.06),
+      transparent 52%
     ),
     radial-gradient(
       ellipse 100% 60% at 85% 10%,
-      rgba(59, 130, 246, 0.08),
+      rgba(59, 130, 246, 0.07),
       transparent 50%
     ),
     radial-gradient(
       ellipse 80% 50% at 50% 100%,
-      rgba(147, 51, 234, 0.05),
+      rgba(5, 150, 105, 0.05),
       transparent 45%
     );
 }
@@ -87,20 +155,243 @@ body {
 .dark .mesh-gradient {
   background:
     radial-gradient(
-      ellipse 120% 80% at 20% -20%,
-      rgba(16, 185, 129, 0.22),
-      transparent 55%
+      ellipse 140% 90% at 15% -25%,
+      rgba(5, 150, 105, 0.24),
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse 90% 70% at 92% 5%,
+      rgba(251, 191, 36, 0.08),
+      transparent 52%
     ),
     radial-gradient(
       ellipse 100% 60% at 85% 10%,
-      rgba(59, 130, 246, 0.14),
+      rgba(59, 130, 246, 0.12),
       transparent 50%
     ),
     radial-gradient(
       ellipse 80% 50% at 50% 100%,
-      rgba(147, 51, 234, 0.08),
+      rgba(5, 150, 105, 0.1),
       transparent 45%
     );
+}
+
+/* Stadium floodlight wash for hero panels */
+.stadium-gradient {
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -30%, rgba(251, 191, 36, 0.07), transparent 55%),
+    radial-gradient(ellipse 80% 60% at 0% 50%, rgba(5, 150, 105, 0.1), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 100% 50%, rgba(5, 150, 105, 0.08), transparent 50%);
+}
+
+.dark .stadium-gradient {
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -30%, rgba(251, 191, 36, 0.1), transparent 55%),
+    radial-gradient(ellipse 80% 60% at 0% 50%, rgba(5, 150, 105, 0.16), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 100% 50%, rgba(5, 150, 105, 0.12), transparent 50%);
+}
+
+/* Pitch line motif — half-way line + centre circle suggestion */
+.pitch-surface-subtle::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 49.5%, var(--pitch-line) 49.5%, var(--pitch-line) 50.5%, transparent 50.5%),
+    radial-gradient(circle at 50% 35%, transparent 0, transparent 18%, var(--pitch-line) 18.2%, transparent 18.4%);
+  opacity: 0.55;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 85%);
+}
+
+/* Hero pitch — stadium floodlights + centre circle for auth / marketing panels */
+.pitch-surface-hero::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 49.5%, var(--pitch-line) 49.5%, var(--pitch-line) 50.5%, transparent 50.5%),
+    radial-gradient(circle at 50% 42%, transparent 0, transparent 22%, var(--pitch-line) 22.2%, transparent 22.5%);
+  opacity: 0.45;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 90%);
+}
+
+.pitch-surface {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Tactical board dot grid */
+.tactical-grid {
+  background-image: radial-gradient(var(--tactical-dot) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+/* Metric cards — subtle pitch stripe at top */
+.pitch-card-accent {
+  box-shadow:
+    inset 0 1px 0 var(--pitch-line),
+    0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Dashboard hero — pitch at night, first impression after login */
+.dashboard-hero-band {
+  background:
+    radial-gradient(ellipse 90% 70% at 15% -20%, rgba(52, 211, 153, 0.14), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 95% 10%, rgba(251, 191, 36, 0.08), transparent 50%),
+    linear-gradient(165deg, #04100e 0%, #071210 38%, #0a1815 100%);
+  border-bottom: 1px solid rgba(52, 211, 153, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 28px 56px -32px rgba(0, 0, 0, 0.55);
+}
+
+/* Dark pitch sidebar — dugout navigation */
+.dashboard-sidebar {
+  background:
+    radial-gradient(ellipse 120% 80% at 0% 0%, rgba(52, 211, 153, 0.1), transparent 55%),
+    linear-gradient(180deg, #071210 0%, #0a1512 100%);
+  border-color: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.88);
+  box-shadow:
+    inset -1px 0 0 rgba(52, 211, 153, 0.08),
+    4px 0 32px -12px rgba(0, 0, 0, 0.35);
+}
+
+.dashboard-sidebar .dashboard-sidebar-muted {
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.dashboard-sidebar .dashboard-sidebar-border {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Dashboard insight panels — attendance, income, alerts */
+.dashboard-insight-panel {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  background: color-mix(in srgb, var(--card) 94%, var(--accent) 6%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 32px -20px rgba(5, 150, 105, 0.18);
+}
+
+.dashboard-widget-panel {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 16px 40px -24px rgba(5, 150, 105, 0.12);
+}
+
+/* Football-branded panel — premium sports styling across the app */
+.football-panel {
+  background: color-mix(in srgb, var(--card) 96%, var(--accent) 4%);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 16%, transparent),
+    0 8px 28px -18px rgba(5, 150, 105, 0.14);
+}
+
+.football-panel-interactive {
+  transition:
+    transform var(--motion-slow) var(--motion-ease),
+    box-shadow var(--motion-slow) var(--motion-ease),
+    border-color var(--motion-slow) ease;
+}
+
+.football-panel-interactive:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 20%, transparent),
+    0 20px 44px -20px rgba(5, 150, 105, 0.22);
+}
+
+/* Page header band — manager pages, settings, family sections */
+.football-page-band {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem; /* matches rounded-2xl surfaces */
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--border));
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(5, 150, 105, 0.08), transparent 55%),
+    color-mix(in srgb, var(--card) 94%, var(--accent) 6%);
+  padding: 1.25rem 1.5rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 36px -24px rgba(5, 150, 105, 0.16);
+}
+
+@media (min-width: 640px) {
+  .football-page-band {
+    padding: 1.5rem 1.75rem;
+  }
+}
+
+/* Auth card shell */
+.football-auth-card {
+  background: color-mix(in srgb, var(--card) 92%, var(--accent) 8%);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 24px 56px -28px rgba(5, 150, 105, 0.28);
+}
+
+/* Family portal header */
+.football-family-header {
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(5, 150, 105, 0.1), transparent 55%),
+    color-mix(in srgb, var(--card) 94%, var(--accent) 6%);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--border));
+}
+
+/* Booking portal hero — stadium lighting for parent booking */
+.football-booking-hero {
+  background:
+    radial-gradient(ellipse 90% 70% at 10% -20%, rgba(5, 150, 105, 0.14), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 95% 10%, rgba(251, 191, 36, 0.06), transparent 50%),
+    var(--background);
+}
+
+/* Demo workspace header */
+.football-demo-header {
+  background:
+    radial-gradient(ellipse 90% 70% at 10% -30%, rgba(52, 211, 153, 0.12), transparent 55%),
+    linear-gradient(180deg, #071210 0%, #0a1512 100%);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+/* Marketing homepage — pitch line art overlay */
+.marketing-pitch-lines {
+  background:
+    linear-gradient(90deg, transparent 49.6%, rgba(52, 211, 153, 0.12) 49.6%, rgba(52, 211, 153, 0.12) 50.4%, transparent 50.4%),
+    radial-gradient(circle at 50% 38%, transparent 0, transparent 24%, rgba(52, 211, 153, 0.1) 24.2%, transparent 24.5%),
+    linear-gradient(0deg, transparent 78%, rgba(52, 211, 153, 0.06) 78%, rgba(52, 211, 153, 0.06) 79%, transparent 79%);
+}
+
+.marketing-stadium-frame {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 48px 120px -32px rgba(0, 0, 0, 0.75),
+    0 0 80px -20px rgba(52, 211, 153, 0.15);
+}
+
+.marketing-bento-card {
+  background: #030712;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 24px 60px -32px rgba(0, 0, 0, 0.45);
+}
+
+/* Dashboard pitch zone strip */
+.dashboard-pitch-strip {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
 }
 
 @keyframes preview-fade-up {
@@ -126,20 +417,29 @@ body {
 @keyframes preview-pulse-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0);
   }
   50% {
-    box-shadow: 0 0 24px 2px rgba(16, 185, 129, 0.18);
+    box-shadow: 0 0 24px 2px rgba(5, 150, 105, 0.18);
+  }
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
   }
 }
 
 .animate-preview-fade-up {
-  animation: preview-fade-up 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: preview-fade-up 0.75s var(--motion-ease) forwards;
   opacity: 0;
 }
 
 .animate-preview-bar {
-  animation: preview-bar-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: preview-bar-rise 0.9s var(--motion-ease) forwards;
   transform: scaleY(0);
   transform-origin: bottom;
 }
@@ -148,16 +448,118 @@ body {
   animation: preview-pulse-glow 3.5s ease-in-out infinite;
 }
 
+.motion-fade-in {
+  animation: preview-fade-up 0.55s var(--motion-ease) both;
+}
+
+.page-content-enter {
+  animation: preview-fade-up 0.45s var(--motion-ease) both;
+}
+
+.stagger-children > * {
+  animation: preview-fade-up 0.5s var(--motion-ease) both;
+}
+
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 40ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 80ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 160ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 200ms; }
+.stagger-children > *:nth-child(n + 7) { animation-delay: 240ms; }
+
+.motion-press {
+  transition:
+    transform var(--motion-base) var(--motion-ease),
+    opacity var(--motion-base) ease;
+}
+
+.motion-press:active {
+  transform: scale(0.98);
+}
+
+.motion-card-lift {
+  transition:
+    transform var(--motion-slow) var(--motion-ease),
+    box-shadow var(--motion-slow) ease,
+    border-color var(--motion-slow) ease;
+}
+
+.motion-card-lift:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 16px 40px -20px rgba(15, 23, 42, 0.18);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--border));
+}
+
+.dark .motion-card-lift:hover {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 20px 48px -22px rgba(0, 0, 0, 0.65);
+}
+
+.nav-link-underline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--motion-slow) var(--motion-ease);
+}
+
+.nav-link-underline:hover::after,
+.nav-link-active::after {
+  transform: scaleX(1);
+}
+
+.skeleton-pulse {
+  background: linear-gradient(
+    90deg,
+    var(--surface-subtle) 0%,
+    rgba(5, 150, 105, 0.08) 50%,
+    var(--surface-subtle) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
   body,
-  .glass-panel {
-    transition: none;
+  .glass-panel,
+  .football-panel,
+  .football-panel-interactive,
+  .motion-press,
+  .motion-card-lift,
+  .interactive-surface,
+  .nav-link-underline::after {
+    transition: none !important;
+  }
+
+  .motion-card-lift:hover,
+  .interactive-surface:hover,
+  .glass-panel.interactive-surface:hover,
+  .football-panel-interactive:hover,
+  .motion-press:active {
+    transform: none;
   }
 
   .animate-preview-fade-up,
   .animate-preview-bar,
-  .animate-preview-glow {
-    animation: none;
+  .animate-preview-glow,
+  .motion-fade-in,
+  .page-content-enter,
+  .stagger-children > *,
+  .skeleton-pulse {
+    animation: none !important;
     opacity: 1;
     transform: none;
   }

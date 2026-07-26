@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import { enforceBotProtection } from "@/lib/bot-protection";
+import { HONEYPOT_FIELD_NAME } from "@/lib/bot-protection-shared";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { apiError } from "@/lib/api-response";
 import { getDayLabel, type PublicRecurringSeriesRow } from "@/lib/booking-system";
 import {
   createPublicSupabaseClient,
@@ -6,6 +10,12 @@ import {
   type PublicPortalTenant,
 } from "@/lib/public-booking";
 import { getStripeServerClient } from "@/lib/stripe";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isValidEmail } from "@/lib/validation/email";
+import { normalisePhone } from "@/lib/validation/phone";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
+
+const CHECKOUT_HOLD_SECONDS = 30 * 60;
 
 type RecurringBookingBody = {
   recurringSeriesId?: string;
@@ -15,6 +25,8 @@ type RecurringBookingBody = {
   parentEmail?: string;
   parentPhone?: string;
   notes?: string;
+  turnstileToken?: string;
+  [key: string]: unknown;
 };
 
 type CreateRecurringRpcRow = {
@@ -61,8 +73,23 @@ function getSeriesTimeLabel(series: PublicRecurringSeriesRow) {
   return series.start_time.slice(0, 5);
 }
 
+function getStripeCheckoutExpiry() {
+  const stripeCheckoutExpiresAt = Math.floor(Date.now() / 1000) + CHECKOUT_HOLD_SECONDS;
+  return {
+    stripeCheckoutExpiresAt,
+    checkoutExpiresAt: new Date(stripeCheckoutExpiresAt * 1000).toISOString(),
+  };
+}
+
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.publicBooking,
+      route: "/api/bookings/recurring",
+    });
+    if (limited) return limited;
+
     const tenant = getTenantFromRequest(request);
     if (!tenant) {
       return NextResponse.json(
@@ -71,12 +98,51 @@ export async function POST(request: Request) {
       );
     }
 
+    const demoResponse = rejectDemoMutation(
+      request,
+      "create a live subscription booking",
+      tenant.kind === "academy"
+        ? { academySlug: tenant.slug }
+        : { coachSlug: tenant.slug },
+    );
+    if (demoResponse) {
+      return NextResponse.json({
+        demo: true,
+        status: "active",
+        message:
+          "Demo membership accepted. No Stripe subscription was created and no email was sent.",
+        checkoutUrl: null,
+      });
+    }
+
     const body = (await request.json()) as RecurringBookingBody;
+
+    const bot = await enforceBotProtection({
+      request,
+      route: "/api/bookings/recurring",
+      input: {
+        honeypot:
+          typeof body[HONEYPOT_FIELD_NAME] === "string"
+            ? (body[HONEYPOT_FIELD_NAME] as string)
+            : "",
+        turnstileToken:
+          typeof body.turnstileToken === "string" ? body.turnstileToken : null,
+      },
+    });
+    if (!bot.ok) {
+      if (bot.code === "honeypot") {
+        return NextResponse.json({ ok: true, honeypot: true });
+      }
+      return apiError(400, bot.message, "bot_blocked");
+    }
+
     const recurringSeriesId = body.recurringSeriesId?.trim();
-    const childName = body.childName?.trim();
-    const parentName = body.parentName?.trim() ?? "";
-    const parentEmail = body.parentEmail?.trim();
-    const parentPhone = body.parentPhone?.trim() ?? "";
+    const childName = typeof body.childName === "string" ? body.childName.trim() : "";
+    const parentName = typeof body.parentName === "string" ? body.parentName.trim() : "";
+    const parentEmail = typeof body.parentEmail === "string" ? body.parentEmail.trim() : "";
+    const parentPhone = normalisePhone(
+      typeof body.parentPhone === "string" ? body.parentPhone : null,
+    );
 
     if (!recurringSeriesId || !childName || !parentEmail) {
       return NextResponse.json(
@@ -84,6 +150,13 @@ export async function POST(request: Request) {
           error:
             "Recurring series, child name, and parent email are required.",
         },
+        { status: 400 },
+      );
+    }
+
+    if (!isValidEmail(parentEmail)) {
+      return NextResponse.json(
+        { error: "Please enter a valid email address." },
         { status: 400 },
       );
     }
@@ -120,7 +193,7 @@ export async function POST(request: Request) {
       p_child_date_of_birth: body.childDateOfBirth || null,
       p_parent_name: parentName || null,
       p_parent_email: parentEmail,
-      p_parent_phone: parentPhone || null,
+      p_parent_phone: parentPhone,
       p_notes: body.notes?.trim() || null,
     });
 
@@ -136,12 +209,14 @@ export async function POST(request: Request) {
       );
     }
 
+    const { stripeCheckoutExpiresAt, checkoutExpiresAt } = getStripeCheckoutExpiry();
     const stripe = getStripeServerClient();
     const origin = new URL(request.url).origin;
     const portalUrl = getPortalUrl(origin, tenant);
     const stripeSession = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer_email: parentEmail,
+      expires_at: stripeCheckoutExpiresAt,
       line_items: [
         {
           quantity: 1,
@@ -189,10 +264,37 @@ export async function POST(request: Request) {
       },
     });
 
+    const admin = createAdminClient();
+    const { error: attachError } = await admin.rpc(
+      "attach_stripe_checkout_to_recurring_enrolment",
+      {
+        p_enrolment_id: enrolment.enrolment_id,
+        p_stripe_checkout_session_id: stripeSession.id,
+        p_checkout_expires_at: stripeCheckoutExpiresAt,
+      },
+    );
+
+    if (attachError) {
+      try {
+        await stripe.checkout.sessions.expire(stripeSession.id);
+      } catch {
+        // Best-effort; session may already be expired.
+      }
+      try {
+        await admin.rpc("expire_pending_recurring_enrolment", {
+          p_enrolment_id: enrolment.enrolment_id,
+        });
+      } catch {
+        // Best-effort capacity release.
+      }
+      return NextResponse.json({ error: attachError.message }, { status: 500 });
+    }
+
     return NextResponse.json({
       enrolmentId: enrolment.enrolment_id,
       playerId: enrolment.player_id,
       checkoutUrl: stripeSession.url ?? null,
+      checkoutExpiresAt,
     });
   } catch (error: unknown) {
     return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });

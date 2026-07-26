@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
 import { getReferralCode, getReferralUrl } from "@/lib/referrals";
 import { hasFeatureAccess } from "@/lib/subscription";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { getSetupRequiredMessage, isMissingTableError } from "@/lib/supabase-errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { isValidEmail } from "@/lib/validation/email";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type InviteBody = {
   email?: string;
@@ -12,6 +15,16 @@ type InviteBody = {
 
 export async function POST(request: Request) {
   try {
+    const demoBlocked = rejectDemoMutation(request, "send a referral invite email");
+    if (demoBlocked) return demoBlocked;
+
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.communicationSend,
+      route: "/api/referrals/send-invite",
+    });
+    if (limited) return limited;
+
     const supabase = await createServerSupabaseClient();
     const {
       data: { user },
@@ -32,7 +45,7 @@ export async function POST(request: Request) {
     if (!allowed) {
       return NextResponse.json(
         {
-          error: "Referrals require a higher CoachFlow plan.",
+          error: "Referrals require a higher Awarix plan.",
           requiredPlan: getMinimumPlanForGateFeature("referrals"),
         },
         { status: 403 },
@@ -43,6 +56,12 @@ export async function POST(request: Request) {
     const email = body.email?.trim();
     if (!email) {
       return NextResponse.json({ error: "Email is required." }, { status: 400 });
+    }
+    if (!isValidEmail(email)) {
+      return NextResponse.json(
+        { error: "Please enter a valid email address." },
+        { status: 400 },
+      );
     }
 
     const referralCode = getReferralCode(user.id);
@@ -71,9 +90,9 @@ export async function POST(request: Request) {
     const { error } = await resend.emails.send({
       from: resendFromEmail,
       to: email,
-      subject: "Try CoachFlow for your coaching business",
-      html: `<!doctype html><html><body style="font-family:Inter,Arial,sans-serif;background:#f6f7f9;padding:32px;"><div style="max-width:600px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><p style="color:#10b981;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:12px;">CoachFlow</p><h1 style="color:#0f172a;">You have been invited to CoachFlow</h1><p style="color:#374151;line-height:1.65;">CoachFlow helps football coaches run players, sessions, reports, payments, and bookings from one premium workspace.</p><p><a href="${referralUrl}" style="display:inline-block;background:#10b981;color:white;padding:12px 20px;border-radius:999px;text-decoration:none;font-weight:700;">Start with CoachFlow</a></p><p style="color:#6b7280;font-size:13px;">Referral code: ${referralCode}</p></div></body></html>`,
-      text: `You have been invited to CoachFlow.\n\nStart here: ${referralUrl}\n\nReferral code: ${referralCode}`,
+      subject: "Try Awarix for your coaching business",
+      html: `<!doctype html><html><body style="font-family:Inter,Arial,sans-serif;background:#f6f7f9;padding:32px;"><div style="max-width:600px;margin:0 auto;background:#fff;border-radius:24px;padding:32px;border:1px solid #e5e7eb;"><p style="color:#10b981;font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:12px;">Awarix</p><h1 style="color:#0f172a;">You have been invited to Awarix</h1><p style="color:#374151;line-height:1.65;">Awarix helps football coaches run players, sessions, reports, payments, and bookings from one premium workspace.</p><p><a href="${referralUrl}" style="display:inline-block;background:#10b981;color:white;padding:12px 20px;border-radius:999px;text-decoration:none;font-weight:700;">Start with Awarix</a></p><p style="color:#6b7280;font-size:13px;">Referral code: ${referralCode}</p></div></body></html>`,
+      text: `You have been invited to Awarix.\n\nStart here: ${referralUrl}\n\nReferral code: ${referralCode}`,
     });
 
     if (error) {

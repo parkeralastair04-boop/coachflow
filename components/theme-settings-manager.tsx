@@ -3,6 +3,7 @@
 import { useTheme } from "next-themes";
 import { useMounted } from "@/lib/use-mounted";
 import { Check, Palette } from "lucide-react";
+import { PageHeader } from "@/components/page-header";
 import { BRAND_EMERALD, BRAND_NAVY, THEME_OPTIONS, type ThemeMode } from "@/lib/theme";
 import { cn } from "@/lib/utils";
 
@@ -15,17 +16,15 @@ export function ThemeSettingsManager() {
     resolvedTheme === "light" ? "Light" : resolvedTheme === "dark" ? "Dark" : "—";
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Appearance</h1>
-        <p className="text-muted mt-1 text-sm">
-          Choose how CoachFlow looks on this device. Your preference is saved automatically.
-        </p>
-      </div>
+    <div className="page-content-enter space-y-8">
+      <PageHeader
+        title="Appearance"
+        subtitle="Choose how Awarix looks on this device. Your preference is saved automatically."
+      />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <Palette className="text-accent size-5" aria-hidden />
           </div>
           <div>
@@ -88,7 +87,7 @@ export function ThemeSettingsManager() {
         </div>
 
         <p className="text-muted mt-6 text-xs leading-relaxed">
-          CoachFlow uses emerald green ({BRAND_EMERALD}) and navy ({BRAND_NAVY}) across both
+          Awarix uses emerald green ({BRAND_EMERALD}) and navy ({BRAND_NAVY}) across both
           themes. Dark mode is the default when you first sign up.
         </p>
       </section>

@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { isMissedAttendanceStatus, type PlayerAttendanceStatus } from "@/lib/attendance";
 import {
   renderAutomationText,
   type AutomationRow,
   type AutomationType,
 } from "@/lib/automations";
+import { recordJobOutcome } from "@/lib/jobs/monitor";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasFeatureAccess } from "@/lib/subscription";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type PlayerRow = {
   id: string;
@@ -108,7 +111,7 @@ function buildEmailHtml(subject: string, body: string) {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td style="padding:28px 32px;background:#0f172a;color:#ffffff;">
-                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">CoachFlow</div>
+                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">Awarix</div>
                 <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">${subject}</h1>
               </td>
             </tr>
@@ -285,12 +288,22 @@ function candidatesForAutomation(args: {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const demoBlocked = rejectDemoMutation(request, "run automations email");
+    if (demoBlocked) return demoBlocked;
+
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.aiGenerate,
+      route: "/api/automations/run",
+    });
+    if (limited) return limited;
+
     const allowed = await hasFeatureAccess("automations");
     if (!allowed) {
       return NextResponse.json(
-        { error: "Automations are available on CoachFlow Pro and Academy." },
+        { error: "Automations are available on Awarix Pro and Academy." },
         { status: 403 },
       );
     }
@@ -421,6 +434,13 @@ export async function POST() {
       sent += 1;
     }
 
+    await recordJobOutcome({
+      job: "automation_run",
+      outcome: "success",
+      message: "Automation run completed",
+      metadata: { evaluated: candidates.length, sent },
+    });
+
     return NextResponse.json({
       evaluated: candidates.length,
       sent,
@@ -433,6 +453,13 @@ export async function POST() {
       typeof error.message === "string"
         ? error.message
         : "Unable to run automations.";
+
+    await recordJobOutcome({
+      job: "automation_run",
+      outcome: "failed",
+      message: "Automation run failed",
+      error,
+    });
 
     return NextResponse.json({ error: message }, { status: 500 });
   }

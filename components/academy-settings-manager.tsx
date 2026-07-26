@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { Loader2, Palette, Save, Upload } from "lucide-react";
 import {
+  ACADEMY_SUPPORT_PHONE_ENABLED,
   DEFAULT_ACADEMY_BRANDING,
   type AcademyBranding,
   type AcademyRole,
 } from "@/lib/academy-shared";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
 import { createClient } from "@/lib/supabase";
 import {
@@ -16,6 +18,11 @@ import {
   isMissingTableError,
   resolveQueryError,
 } from "@/lib/supabase-errors";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { saveAcademyBusinessName } from "@/lib/onboarding-setup";
+import { isValidEmail } from "@/lib/validation/email";
+import { isValidSupportPhone, normaliseSupportPhone } from "@/lib/validation/phone";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type AcademyMember = {
   id: string;
@@ -27,18 +34,6 @@ type AcademyMember = {
 type AcademyMemberResponse = AcademyMember & {
   academy: AcademyBranding | AcademyBranding[] | null;
 };
-
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
-}
 
 function normalizeAcademy(
   academy: AcademyBranding | AcademyBranding[] | null,
@@ -55,6 +50,8 @@ export function AcademySettingsManager() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [supportEmailError, setSupportEmailError] = useState<string | null>(null);
+  const [supportPhoneError, setSupportPhoneError] = useState<string | null>(null);
   const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const loadAcademy = useCallback(async () => {
@@ -70,7 +67,7 @@ export function AcademySettingsManager() {
       } = await supabase.auth.getUser();
 
       if (userError) {
-        setError(userError.message);
+        setError(sanitizeDashboardSaveError(userError, { logLabel: "academy-settings-auth" }));
         return;
       }
       if (!user) {
@@ -82,7 +79,7 @@ export function AcademySettingsManager() {
       const { data: membership, error: membershipError } = await supabase
         .from("academy_members")
         .select(
-          "id, user_id, role, created_at, academy:academies(id, name, logo_url, primary_color, secondary_color, custom_domain, support_email)",
+          "id, user_id, role, created_at, academy:academies(id, name, logo_url, primary_color, secondary_color, custom_domain, support_email, public_description, public_address)",
         )
         .eq("user_id", user.id)
         .order("created_at", { ascending: true })
@@ -95,6 +92,10 @@ export function AcademySettingsManager() {
           return;
         }
         const resolved = resolveQueryError(membershipError, "academy_members");
+        if (resolved.setupRequired) {
+          setSetupTables([resolved.table]);
+          return;
+        }
         setError(resolved.message);
         return;
       }
@@ -104,40 +105,50 @@ export function AcademySettingsManager() {
       );
 
       if (!activeAcademy) {
-        const { data: createdAcademy, error: createError } = await supabase
-          .from("academies")
-          .insert({
-            ...DEFAULT_ACADEMY_BRANDING,
-            name: "My Academy",
-            support_email: user.email ?? null,
-          })
-          .select("id, name, logo_url, primary_color, secondary_color, custom_domain, support_email")
-          .single();
-
-        if (createError) {
-          if (isMissingTableError(createError)) {
-            setSetupTables(["academies", "academy_members"]);
-            return;
-          }
-          setError(createError.message);
-          return;
-        }
-
-        activeAcademy = createdAcademy as AcademyBranding;
-        const { error: memberError } = await supabase
-          .from("academy_members")
-          .insert({
-            academy_id: activeAcademy.id,
-            user_id: user.id,
-            role: "owner",
+        try {
+          const context = await saveAcademyBusinessName(supabase, {
+            coachId: user.id,
+            email: user.email ?? null,
+            businessName: "My Academy",
           });
 
-        if (memberError) {
-          if (isMissingTableError(memberError)) {
+          if (!context.academyId) {
+            setError("Could not create your academy.");
+            return;
+          }
+
+          const { data: createdAcademy, error: createdError } = await supabase
+            .from("academies")
+            .select(
+              "id, name, logo_url, primary_color, secondary_color, custom_domain, support_email, public_description, public_address",
+            )
+            .eq("id", context.academyId)
+            .single();
+
+          if (createdError || !createdAcademy) {
+            if (createdError && isMissingTableError(createdError)) {
+              setSetupTables(["academies", "academy_members"]);
+              return;
+            }
+            setError(
+              sanitizeDashboardSaveError(createdError ?? new Error("Could not create your academy."), {
+                logLabel: "academy-settings-create",
+              }),
+            );
+            return;
+          }
+
+          activeAcademy = createdAcademy as AcademyBranding;
+        } catch (createCaught: unknown) {
+          const tableError =
+            typeof createCaught === "object" && createCaught !== null
+              ? (createCaught as { message?: string; code?: string })
+              : null;
+          if (isMissingTableError(tableError)) {
             setSetupTables(["academies", "academy_members"]);
             return;
           }
-          setError(memberError.message);
+          setError(sanitizeDashboardSaveError(createCaught, { logLabel: "academy-settings-create" }));
           return;
         }
       }
@@ -154,13 +165,13 @@ export function AcademySettingsManager() {
           setSetupTables(["academy_members"]);
           return;
         }
-        setError(membersError.message);
+        setError(sanitizeDashboardSaveError(membersError, { logLabel: "academy-settings-load" }));
         return;
       }
 
       setMembers((memberRows ?? []) as AcademyMember[]);
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "academy-settings-load" }));
     } finally {
       setLoading(false);
     }
@@ -179,36 +190,59 @@ export function AcademySettingsManager() {
 
   async function saveSettings() {
     if (!academy) return;
+
+    const supportEmail = academy.support_email?.trim() ?? "";
+    if (supportEmail && !isValidEmail(supportEmail)) {
+      setSupportEmailError("Please enter a valid email address.");
+      return;
+    }
+
+    const supportPhone = academy.support_phone?.trim() ?? "";
+    if (ACADEMY_SUPPORT_PHONE_ENABLED && supportPhone && !isValidSupportPhone(supportPhone)) {
+      setSupportPhoneError("Please enter a valid phone number.");
+      return;
+    }
+
     setSaving(true);
     setError(null);
     setSuccess(null);
+    setSupportEmailError(null);
+    setSupportPhoneError(null);
 
     try {
       const supabase = createClient();
+      const updatePayload: Record<string, string | null> = {
+        name: academy.name.trim(),
+        logo_url: academy.logo_url?.trim() || null,
+        primary_color: academy.primary_color,
+        secondary_color: academy.secondary_color,
+        custom_domain: academy.custom_domain?.trim() || null,
+        support_email: academy.support_email?.trim() || null,
+        public_description: academy.public_description?.trim() || null,
+        public_address: academy.public_address?.trim() || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (ACADEMY_SUPPORT_PHONE_ENABLED) {
+        updatePayload.support_phone = normaliseSupportPhone(supportPhone);
+      }
+
       const { data, error: saveError } = await supabase
         .from("academies")
-        .update({
-          name: academy.name.trim(),
-          logo_url: academy.logo_url?.trim() || null,
-          primary_color: academy.primary_color,
-          secondary_color: academy.secondary_color,
-          custom_domain: academy.custom_domain?.trim() || null,
-          support_email: academy.support_email?.trim() || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updatePayload)
         .eq("id", academy.id)
-        .select("id, name, logo_url, primary_color, secondary_color, custom_domain, support_email")
+        .select("id, name, logo_url, primary_color, secondary_color, custom_domain, support_email, public_description, public_address")
         .single();
 
       if (saveError) {
-        setError(saveError.message);
+        setError(sanitizeDashboardSaveError(saveError, { logLabel: "academy-settings-save" }));
         return;
       }
 
       setAcademy(data as AcademyBranding);
       setSuccess("Academy branding saved.");
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "academy-settings-load" }));
     } finally {
       setSaving(false);
     }
@@ -229,9 +263,7 @@ export function AcademySettingsManager() {
         .upload(path, file, { upsert: true });
 
       if (uploadError) {
-        setError(
-          `${uploadError.message}. Create a public Supabase storage bucket named "academy-logos" first.`,
-        );
+        setError(sanitizeDashboardSaveError(uploadError, { logLabel: "academy-settings-upload" }));
         return;
       }
 
@@ -239,7 +271,7 @@ export function AcademySettingsManager() {
       updateAcademy({ logo_url: data.publicUrl });
       setSuccess("Logo uploaded. Save settings to apply it.");
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "academy-settings-load" }));
     } finally {
       setUploading(false);
     }
@@ -247,20 +279,17 @@ export function AcademySettingsManager() {
 
   if (loading) {
     return (
-      <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Loading academy settings...
-      </div>
+      <PanelSkeleton />
     );
   }
 
   if (setupTables.length > 0) {
     return (
-      <div className="space-y-10">
+      <div className="page-content-enter space-y-10">
         <FeaturePageHeader
           featureKey="academy"
-          title="Academy Settings"
-          subtitle="Configure white-label branding, domains, support details, and academy membership for multi-coach teams."
+          title="Club Identity"
+          subtitle="Crest, colours, domains, support details, and multi-coach access parents see across Awarix."
           subtitleClassName="max-w-2xl"
         />
         <SetupRequiredPanel
@@ -273,44 +302,38 @@ export function AcademySettingsManager() {
 
   if (!academy) {
     return (
-      <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-        {error ?? "Academy settings could not be loaded."}
-      </div>
+      <FormErrorAlert message={error ?? "Academy settings could not be loaded."} />
     );
   }
 
   return (
-    <div className="space-y-10">
+    <div className="page-content-enter space-y-10">
       <FeaturePageHeader
         featureKey="academy"
-        title="Academy Settings"
-        subtitle="Configure white-label branding, domains, support details, and academy membership for multi-coach teams."
+        title="Club Identity"
+        subtitle="Crest, colours, domains, support details, and multi-coach access parents see across Awarix."
         subtitleClassName="max-w-2xl"
       />
 
-      {error ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </div>
-      ) : null}
+      {error ? <FormErrorAlert message={error} /> : null}
       {success ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-accent">
+        <div className="football-panel football-panel-interactive rounded-2xl p-5 text-sm text-accent">
           {success}
         </div>
       ) : null}
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <Palette className="text-accent size-5" aria-hidden />
           </div>
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
-              White-label branding
+              Club branding
             </h2>
             <p className="text-muted mt-1 text-sm">
-              These settings power the dashboard shell, reports, emails, and
-              future academy domains.
+              Crest, colours, and name parents see on booking, reports, emails,
+              and your academy website.
             </p>
           </div>
         </div>
@@ -321,7 +344,7 @@ export function AcademySettingsManager() {
             <input
               value={academy.name}
               onChange={(e) => updateAcademy({ name: e.target.value })}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
           </div>
 
@@ -350,21 +373,123 @@ export function AcademySettingsManager() {
             <input
               value={academy.custom_domain ?? ""}
               onChange={(e) => updateAcademy({ custom_domain: e.target.value })}
-              placeholder="academyname.coachflow.website"
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              placeholder="academyname.awarix.co.uk"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium">Support email</label>
+            <label className="mb-2 block text-sm font-medium" htmlFor="supportEmail">
+              Support email
+            </label>
             <input
+              id="supportEmail"
               type="email"
               value={academy.support_email ?? ""}
-              onChange={(e) => updateAcademy({ support_email: e.target.value })}
+              onChange={(e) => {
+                updateAcademy({ support_email: e.target.value });
+                if (supportEmailError) setSupportEmailError(null);
+              }}
+              aria-invalid={supportEmailError ? true : undefined}
+              aria-describedby={supportEmailError ? "supportEmail-error" : undefined}
               placeholder="support@academy.com"
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
+            {supportEmailError ? (
+              <FormErrorAlert id="supportEmail-error" message={supportEmailError} />
+            ) : null}
           </div>
+
+          <div className="sm:col-span-2">
+            <label className="mb-2 block text-sm font-medium" htmlFor="publicDescription">
+              Public website description
+            </label>
+            <textarea
+              id="publicDescription"
+              rows={4}
+              value={academy.public_description ?? ""}
+              onChange={(e) => updateAcademy({ public_description: e.target.value })}
+              placeholder="Tell families about your academy, age groups, and coaching approach."
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
+            />
+            <p className="text-muted mt-2 text-xs leading-relaxed">
+              Shown on your public Home and About pages.
+            </p>
+          </div>
+
+          <div className="sm:col-span-2">
+            <label className="mb-2 block text-sm font-medium" htmlFor="publicAddress">
+              Public address <span className="text-muted font-normal">(optional)</span>
+            </label>
+            <textarea
+              id="publicAddress"
+              rows={3}
+              value={academy.public_address ?? ""}
+              onChange={(e) => updateAcademy({ public_address: e.target.value })}
+              placeholder="Training venue or correspondence address"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
+            />
+            <p className="text-muted mt-2 text-xs leading-relaxed">
+              Only shown on the Contact page when filled in.
+            </p>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium" htmlFor="supportPhone">
+              Support phone number
+            </label>
+            {ACADEMY_SUPPORT_PHONE_ENABLED ? (
+              <>
+                <input
+                  id="supportPhone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={academy.support_phone ?? ""}
+                  onChange={(e) => {
+                    updateAcademy({ support_phone: e.target.value });
+                    if (supportPhoneError) setSupportPhoneError(null);
+                  }}
+                  aria-invalid={supportPhoneError ? true : undefined}
+                  aria-describedby={
+                    supportPhoneError
+                      ? "supportPhone-error supportPhone-helper"
+                      : "supportPhone-helper"
+                  }
+                  placeholder="07700 900123"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
+                />
+                <p id="supportPhone-helper" className="text-muted mt-2 text-xs leading-relaxed">
+                  Parents can use this number if they need help with bookings or training.
+                </p>
+                {supportPhoneError ? (
+                  <FormErrorAlert id="supportPhone-error" message={supportPhoneError} />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <input
+                  id="supportPhone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value=""
+                  disabled
+                  aria-describedby="supportPhone-helper"
+                  placeholder="07700 900123"
+                  className="border-border bg-background text-muted h-11 w-full cursor-not-allowed rounded-xl border px-3 text-sm opacity-60"
+                />
+                <p id="supportPhone-helper" className="text-muted mt-2 text-xs leading-relaxed">
+                  Parents can use this number if they need help with bookings or training.
+                </p>
+                <p className="text-muted mt-1 text-xs font-medium">Available soon</p>
+              </>
+            )}
+          </div>
+
+          <p className="text-muted sm:col-span-2 text-xs leading-relaxed">
+            Parents will see these contact details on your booking page and in confirmation emails.
+          </p>
 
           <div className="sm:col-span-2">
             <label className="mb-2 block text-sm font-medium">Logo upload</label>
@@ -381,7 +506,7 @@ export function AcademySettingsManager() {
               ) : (
                 <div className="text-muted text-sm">No academy logo uploaded.</div>
               )}
-              <label className="border-border hover:bg-black/[0.03] inline-flex h-10 w-fit cursor-pointer items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]">
+              <label className="border-border hover:bg-surface-hover inline-flex h-10 w-fit cursor-pointer items-center justify-center rounded-full border px-5 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]">
                 {uploading ? (
                   <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
                 ) : (
@@ -419,7 +544,7 @@ export function AcademySettingsManager() {
         </button>
       </section>
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <h2 className="text-lg font-semibold tracking-tight">Academy members</h2>
         <p className="text-muted mt-1 text-sm">
           Multi-coach support is backed by roles: owner, admin, coach, assistant.

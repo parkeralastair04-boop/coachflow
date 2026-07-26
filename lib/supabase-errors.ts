@@ -5,6 +5,8 @@ type SupabaseLikeError = {
   hint?: string | null;
 };
 
+import { getSetupUnavailableMessage, sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+
 export function isMissingTableError(error: SupabaseLikeError | null | undefined): boolean {
   if (!error) return false;
   if (error.code === "PGRST205") return true;
@@ -31,11 +33,8 @@ export function getSetupRequiredMessage(tables: string[]): {
   title: string;
   description: string;
 } {
-  const list = tables.map((table) => `\`${table}\``).join(", ");
-  return {
-    title: "Database setup required",
-    description: `Run the Supabase migrations for ${list} in the Supabase SQL editor or with the Supabase CLI, then refresh this page.`,
-  };
+  void tables;
+  return getSetupUnavailableMessage();
 }
 
 export function resolveQueryError(
@@ -43,16 +42,20 @@ export function resolveQueryError(
   fallbackTable: string,
 ): { setupRequired: boolean; table: string; message: string } | { setupRequired: false; message: string } {
   if (!error) {
-    return { setupRequired: false, message: "An unexpected error occurred." };
+    return { setupRequired: false, message: sanitizeDashboardSaveError(null) };
   }
 
   if (isMissingTableError(error) || isMissingColumnError(error)) {
+    const setup = getSetupUnavailableMessage();
     return {
       setupRequired: true,
       table: getMissingTableName(error) ?? fallbackTable,
-      message: getSetupRequiredMessage([getMissingTableName(error) ?? fallbackTable]).description,
+      message: setup.description,
     };
   }
 
-  return { setupRequired: false, message: error.message ?? "An unexpected error occurred." };
+  return {
+    setupRequired: false,
+    message: sanitizeDashboardSaveError(error, { logLabel: "supabase-query" }),
+  };
 }

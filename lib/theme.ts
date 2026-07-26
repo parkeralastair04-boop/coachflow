@@ -1,8 +1,10 @@
-export const THEME_STORAGE_KEY = "coachflow-theme";
+export const THEME_STORAGE_KEY = "awarix-theme";
+/** Pre-rebrand theme key — ThemeProvider migrates then removes on first load. */
+export const LEGACY_THEME_STORAGE_KEY = "coachflow-theme";
 
 export type ThemeMode = "light" | "dark" | "system";
 
-export const BRAND_EMERALD = "#10B981";
+export const BRAND_EMERALD = "#059669";
 export const BRAND_NAVY = "#0F172A";
 
 export const THEME_OPTIONS: {
@@ -21,7 +23,7 @@ export const THEME_OPTIONS: {
     value: "dark",
     label: "Dark",
     icon: "🌙",
-    description: "Low-glare surfaces — the default CoachFlow experience.",
+    description: "Low-glare surfaces — the default Awarix experience.",
   },
   {
     value: "system",

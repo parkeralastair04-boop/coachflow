@@ -12,10 +12,10 @@ export const FEEDBACK_STATUSES = ["new", "reviewed", "actioned", "archived"] as 
 export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
 
 const FEEDBACK_CATEGORY_LABELS: Record<FeedbackCategory, string> = {
-  general_feedback: "General Feedback",
-  user_experience: "User Experience",
-  positive_feedback: "Positive Feedback",
-  improvement_suggestion: "Improvement Suggestion",
+  general_feedback: "General feedback",
+  user_experience: "Ease of use",
+  positive_feedback: "What's working well",
+  improvement_suggestion: "Improvement idea",
 };
 
 const FEEDBACK_STATUS_LABELS: Record<FeedbackStatus, string> = {

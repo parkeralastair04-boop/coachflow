@@ -1,12 +1,14 @@
 import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
+import { FootballPageBand } from "@/components/football/football-page-band";
+import { getFeatureIcon } from "@/lib/feature-icons";
 import type { FeatureInfoKey } from "@/lib/feature-info";
-import { cn } from "@/lib/utils";
 
 type FeaturePageHeaderProps = {
   featureKey: FeatureInfoKey;
   title: string;
   subtitle: string;
   subtitleClassName?: string;
+  actions?: React.ReactNode;
 };
 
 export function FeaturePageHeader({
@@ -14,14 +16,23 @@ export function FeaturePageHeader({
   title,
   subtitle,
   subtitleClassName,
+  actions,
 }: FeaturePageHeaderProps) {
+  const Icon = getFeatureIcon(featureKey);
+
   return (
-    <div>
-      <div className="flex items-center gap-2">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-        <FeatureInfoTooltip featureKey={featureKey} />
-      </div>
-      <p className={cn("text-muted mt-1 text-sm", subtitleClassName)}>{subtitle}</p>
-    </div>
+    <FootballPageBand
+      title={title}
+      subtitle={subtitle}
+      subtitleClassName={subtitleClassName}
+      icon={Icon}
+      eyebrow="On the pitch"
+      actions={
+        <>
+          {actions}
+          <FeatureInfoTooltip featureKey={featureKey} />
+        </>
+      }
+    />
   );
 }

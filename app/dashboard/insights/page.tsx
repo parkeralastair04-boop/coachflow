@@ -3,7 +3,7 @@ import { FeatureGate } from "@/components/feature-gate";
 import { InsightsManager } from "@/components/insights-manager";
 
 export const metadata: Metadata = {
-  title: "AI Business Insights",
+  title: "AI Coaching Insights",
 };
 
 export default function InsightsPage() {

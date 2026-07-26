@@ -3,7 +3,7 @@ import { FeatureGate } from "@/components/feature-gate";
 import { AnalyticsManager } from "@/components/analytics-manager";
 
 export const metadata: Metadata = {
-  title: "Analytics",
+  title: "Performance Insights",
 };
 
 export default function AnalyticsPage() {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import {
   BUG_PAGE_FEATURES,
   BUG_PRIORITIES,
@@ -28,6 +29,13 @@ function isBugPageFeature(value: string): value is BugPageFeature {
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.support,
+      route: "/api/support/bug-report",
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as BugReportBody;
     const title = body.title?.trim() ?? "";
     const description = body.description?.trim() ?? "";

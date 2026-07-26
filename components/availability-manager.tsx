@@ -14,6 +14,9 @@ import {
   Users,
 } from "lucide-react";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
+import { footballEmptyPreset } from "@/lib/football-identity";
 import {
   DAY_OPTIONS,
   formatMinutes,
@@ -25,13 +28,16 @@ import {
   type SessionTypeOption,
 } from "@/lib/booking-system";
 import { createClient } from "@/lib/supabase";
+import { MIN_CAPACITY, MIN_DURATION_MINUTES } from "@/lib/validation/constants";
 import {
   getSetupRequiredMessage,
   isMissingTableError,
   resolveQueryError,
 } from "@/lib/supabase-errors";
 import { RecurringSeriesManager } from "@/components/recurring-series-manager";
+import { BookingLinkGuidance } from "@/components/booking-link-guidance";
 import type { RecurringSessionSeriesRow } from "@/lib/booking-system";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type AvailabilityFormState = {
   dayOfWeek: string;
@@ -53,6 +59,11 @@ const defaultForm: AvailabilityFormState = {
   defaultPrice: "45.00",
   defaultCapacity: "1",
   visibility: "public",
+};
+
+type AvailabilityFieldErrors = {
+  durationMinutes?: string;
+  defaultCapacity?: string;
 };
 
 function getErrorMessage(error: unknown): string {
@@ -90,6 +101,7 @@ export function AvailabilityManager() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<AvailabilityFieldErrors>({});
   const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const publicTemplates = useMemo(
@@ -245,15 +257,20 @@ export function AvailabilityManager() {
     const defaultCapacity = Number.parseInt(form.defaultCapacity, 10);
     const priceInPence = parsePoundsToPence(form.defaultPrice);
 
-    if (!Number.isFinite(durationMinutes) || durationMinutes < 15) {
-      setSubmitError("Duration must be at least 15 minutes.");
-      return;
+    const nextFieldErrors: AvailabilityFieldErrors = {};
+    if (!Number.isFinite(durationMinutes) || durationMinutes < MIN_DURATION_MINUTES) {
+      nextFieldErrors.durationMinutes = `Duration must be at least ${MIN_DURATION_MINUTES} minutes.`;
     }
-    if (!Number.isFinite(defaultCapacity) || defaultCapacity < 1) {
-      setSubmitError("Capacity must be at least 1.");
+    if (!Number.isFinite(defaultCapacity) || defaultCapacity < MIN_CAPACITY) {
+      nextFieldErrors.defaultCapacity = `Capacity must be at least ${MIN_CAPACITY}.`;
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
       return;
     }
 
+    setFieldErrors({});
     setSaving(true);
     setSubmitError(null);
 
@@ -295,6 +312,7 @@ export function AvailabilityManager() {
         );
       }
       setForm(defaultForm);
+      setFieldErrors({});
     } catch (caughtError: unknown) {
       setSubmitError(getErrorMessage(caughtError));
     } finally {
@@ -339,16 +357,12 @@ export function AvailabilityManager() {
   }
 
   return (
-    <div className="space-y-10">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-          Booking & Availability
-        </h1>
-        <p className="text-muted mt-1 max-w-2xl text-sm">
-          Share your booking portal, define weekly availability templates, and turn
-          them into live sessions with one click.
-        </p>
-      </div>
+    <div className="page-content-enter space-y-10">
+      <PageHeader
+        title="When you coach"
+        subtitle="Share your booking page, set weekly training windows, and publish bookable sessions for parents."
+        subtitleClassName="max-w-2xl"
+      />
 
       <section className="glass-panel sticky top-0 z-30 rounded-2xl p-5 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -356,9 +370,9 @@ export function AvailabilityManager() {
             <p className="text-accent text-xs font-medium tracking-wide uppercase">
               Booking portal
             </p>
-            <h2 className="mt-1 text-base font-semibold tracking-tight">Coach booking URL</h2>
+            <h2 className="mt-1 text-base font-semibold tracking-tight">Your booking links</h2>
             <p className="text-muted mt-1 text-sm">
-              Share this link with parents to take bookings online.
+              Copy the link parents should use — see the guide below if you have both coach and academy pages.
             </p>
           </div>
           {coachBookingUrl ? (
@@ -370,7 +384,7 @@ export function AvailabilityManager() {
                 <button
                   type="button"
                   onClick={() => void copyPortalUrl("coach", coachBookingUrl)}
-                  className="border-border hover:bg-black/[0.03] inline-flex h-10 flex-1 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors sm:flex-none dark:hover:bg-white/[0.06]"
+                  className="border-border hover:bg-surface-hover inline-flex h-10 flex-1 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors sm:flex-none dark:hover:bg-white/[0.06]"
                 >
                   <Copy className="mr-2 size-4" aria-hidden />
                   {copiedUrl === "coach" ? "Copied" : "Copy link"}
@@ -401,7 +415,7 @@ export function AvailabilityManager() {
               <button
                 type="button"
                 onClick={() => void copyPortalUrl("academy", academyBookingUrl)}
-                className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
               >
                 <Copy className="mr-2 size-4" aria-hidden />
                 {copiedUrl === "academy" ? "Copied" : "Copy link"}
@@ -420,6 +434,15 @@ export function AvailabilityManager() {
         ) : null}
       </section>
 
+      {coachBookingUrl || academyBookingUrl ? (
+        <BookingLinkGuidance
+          coachSlug={coachSlug}
+          academySlug={academySlug}
+          primaryUrl={academyBookingUrl ?? coachBookingUrl}
+          variant="full"
+        />
+      ) : null}
+
       {setupTables.length > 0 ? (
         <SetupRequiredPanel
           {...getSetupRequiredMessage(setupTables)}
@@ -429,9 +452,9 @@ export function AvailabilityManager() {
 
       {setupTables.length === 0 ? (
         <>
-          <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+          <section className="football-panel football-panel-interactive rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
             <div className="flex items-start gap-3">
-              <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+              <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
                 <CalendarRange className="text-accent size-5" aria-hidden />
               </div>
               <div>
@@ -440,7 +463,7 @@ export function AvailabilityManager() {
                 </h2>
                 <p className="text-muted mt-1 max-w-2xl text-sm">
                   Create public or private sessions, share your booking portal, and let
-                  CoachFlow handle reservations, payments, and availability in one place.
+                  Awarix handles reservations, payments, and availability so you stay on the pitch.
                 </p>
               </div>
             </div>
@@ -460,7 +483,7 @@ export function AvailabilityManager() {
                 </p>
               </div>
               <div className="rounded-2xl bg-black/[0.02] p-4 dark:bg-white/[0.03]">
-                <p className="text-sm font-medium">Recurring subscriptions</p>
+                <p className="text-sm font-medium">Weekly subscription sessions</p>
                 <p className="text-muted mt-1 text-sm leading-relaxed">
                   Offer weekly coaching subscriptions alongside one-off bookings.
                 </p>
@@ -474,16 +497,15 @@ export function AvailabilityManager() {
             </div>
           </section>
 
-          <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+          <section className="football-panel football-panel-interactive rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
             <div className="flex items-start gap-3">
-              <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+              <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
                 <CalendarRange className="text-accent size-5" aria-hidden />
               </div>
               <div>
                 <h2 className="text-lg font-semibold tracking-tight">Create availability</h2>
                 <p className="text-muted mt-1 text-sm">
-                  Define default duration, pricing, capacity, and visibility for the
-                  slots you regularly offer.
+                  Save a weekly template here to speed up session creation. For your first booking, go straight to Sessions and publish a public slot.
                 </p>
               </div>
             </div>
@@ -499,7 +521,7 @@ export function AvailabilityManager() {
                   onChange={(event) =>
                     setForm((current) => ({ ...current, dayOfWeek: event.target.value }))
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 >
                   {DAY_OPTIONS.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -524,7 +546,7 @@ export function AvailabilityManager() {
                         event.target.value === "1-to-1" ? "1" : current.defaultCapacity,
                     }))
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 >
                   {SESSION_TYPE_OPTIONS.map((option) => (
                     <option key={option} value={option}>
@@ -545,7 +567,7 @@ export function AvailabilityManager() {
                   onChange={(event) =>
                     setForm((current) => ({ ...current, startTime: event.target.value }))
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 />
               </div>
 
@@ -560,28 +582,47 @@ export function AvailabilityManager() {
                   onChange={(event) =>
                     setForm((current) => ({ ...current, endTime: event.target.value }))
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 />
               </div>
 
               <div>
                 <label className="mb-2 block text-sm font-medium" htmlFor="durationMinutes">
-                  Session duration (mins)
+                  Session duration <span className="text-red-500">*</span>
                 </label>
                 <input
                   id="durationMinutes"
                   type="number"
-                  min={15}
-                  step={15}
+                  min={MIN_DURATION_MINUTES}
+                  step={MIN_DURATION_MINUTES}
                   value={form.durationMinutes}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setForm((current) => ({
                       ...current,
                       durationMinutes: event.target.value,
-                    }))
+                    }));
+                    if (fieldErrors.durationMinutes) {
+                      setFieldErrors((current) => ({
+                        ...current,
+                        durationMinutes: undefined,
+                      }));
+                    }
+                  }}
+                  aria-invalid={fieldErrors.durationMinutes ? true : undefined}
+                  aria-describedby={
+                    fieldErrors.durationMinutes ? "durationMinutes-error" : undefined
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 />
+                {fieldErrors.durationMinutes ? (
+                  <p
+                    id="durationMinutes-error"
+                    role="alert"
+                    className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+                  >
+                    {fieldErrors.durationMinutes}
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -607,21 +648,40 @@ export function AvailabilityManager() {
 
               <div>
                 <label className="mb-2 block text-sm font-medium" htmlFor="defaultCapacity">
-                  Max capacity
+                  Max capacity <span className="text-red-500">*</span>
                 </label>
                 <input
                   id="defaultCapacity"
                   type="number"
-                  min={1}
+                  min={MIN_CAPACITY}
                   value={form.defaultCapacity}
-                  onChange={(event) =>
+                  onChange={(event) => {
                     setForm((current) => ({
                       ...current,
                       defaultCapacity: event.target.value,
-                    }))
+                    }));
+                    if (fieldErrors.defaultCapacity) {
+                      setFieldErrors((current) => ({
+                        ...current,
+                        defaultCapacity: undefined,
+                      }));
+                    }
+                  }}
+                  aria-invalid={fieldErrors.defaultCapacity ? true : undefined}
+                  aria-describedby={
+                    fieldErrors.defaultCapacity ? "defaultCapacity-error" : undefined
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 />
+                {fieldErrors.defaultCapacity ? (
+                  <p
+                    id="defaultCapacity-error"
+                    role="alert"
+                    className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+                  >
+                    {fieldErrors.defaultCapacity}
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -637,7 +697,7 @@ export function AvailabilityManager() {
                       visibility: event.target.value as "public" | "private",
                     }))
                   }
-                  className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+                  className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
                 >
                   <option value="public">Public</option>
                   <option value="private">Private</option>
@@ -656,7 +716,10 @@ export function AvailabilityManager() {
               </div>
 
               {submitError ? (
-                <p className="sm:col-span-2 text-sm text-red-600 dark:text-red-400">
+                <p
+                  className="sm:col-span-2 break-words text-sm text-red-600 dark:text-red-400"
+                  role="alert"
+                >
                   {submitError}
                 </p>
               ) : null}
@@ -670,10 +733,10 @@ export function AvailabilityManager() {
                   {saving ? (
                     <>
                       <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                      Saving...
+                      Creating...
                     </>
                   ) : (
-                    "Save availability"
+                    "Create Availability"
                   )}
                 </button>
               </div>
@@ -691,32 +754,27 @@ export function AvailabilityManager() {
             </div>
 
             {error ? (
-              <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
+              <div className="football-panel football-panel-interactive rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
                 {error}
               </div>
             ) : null}
 
             {loading ? (
-              <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-                Loading availability...
-              </div>
+              <PanelSkeleton />
             ) : null}
 
             {!loading && !error && templates.length === 0 ? (
-              <div className="glass-panel rounded-2xl p-8 text-center">
-                <CalendarRange className="text-muted mx-auto size-8" aria-hidden />
-                <p className="mt-3 font-medium">No availability yet</p>
-                <p className="text-muted mt-1 text-sm">
-                  Save your first weekly slot so coaches can create sessions from it.
-                </p>
-              </div>
+              <EmptyState
+                {...footballEmptyPreset("availability")}
+                actionLabel="Go to training sessions"
+                actionHref="/dashboard/sessions"
+              />
             ) : null}
 
             {!loading && !error && templates.length > 0 ? (
               <div className="grid gap-4 lg:grid-cols-2">
                 {templates.map((template) => (
-                  <article key={template.id} className="glass-panel rounded-2xl p-5 sm:p-6">
+                  <article key={template.id} className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <h3 className="text-lg font-semibold tracking-tight">

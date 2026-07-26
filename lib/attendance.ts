@@ -6,6 +6,17 @@ export const PLAYER_ATTENDANCE_STATUS_OPTIONS = [
   "excused",
 ] as const;
 
+export const PRIMARY_ATTENDANCE_STATUS_OPTIONS = [
+  "present",
+  "absent",
+  "late",
+] as const;
+
+export const SECONDARY_ATTENDANCE_STATUS_OPTIONS = [
+  "injured",
+  "excused",
+] as const;
+
 export type PlayerAttendanceStatus =
   (typeof PLAYER_ATTENDANCE_STATUS_OPTIONS)[number];
 
@@ -71,6 +82,14 @@ export function getAttendanceRate(
   return (attended.length / counted.length) * 100;
 }
 
+export function countMarkedPlayers(
+  roster: Array<{ attendance: { status: PlayerAttendanceStatus } | null }>,
+): { marked: number; total: number } {
+  const total = roster.length;
+  const marked = roster.filter((player) => player.attendance !== null).length;
+  return { marked, total };
+}
+
 export function getAttendanceSummary(
   rows: Array<{ status: PlayerAttendanceStatus }>,
 ): Record<PlayerAttendanceStatus, number> {
@@ -87,4 +106,39 @@ export function getAttendanceSummary(
   }
 
   return summary;
+}
+
+export type RegisterCompletenessState =
+  | "empty"
+  | "complete"
+  | "nearly-complete"
+  | "needs-attention";
+
+export function getRegisterCompletenessState(
+  marked: number,
+  total: number,
+): RegisterCompletenessState {
+  if (total === 0) return "empty";
+  if (marked === 0) return "needs-attention";
+  if (marked >= total) return "complete";
+
+  const unmarked = total - marked;
+  if (unmarked <= 2 || marked / total >= 0.8) {
+    return "nearly-complete";
+  }
+
+  return "needs-attention";
+}
+
+export function getSessionPresentRate(
+  rosterPlayerIds: string[],
+  attendanceRows: Array<{ player_id: string; status: PlayerAttendanceStatus }>,
+): number {
+  if (rosterPlayerIds.length === 0) return 0;
+
+  const rosterAttendance = attendanceRows.filter((row) =>
+    rosterPlayerIds.includes(row.player_id),
+  );
+
+  return getAttendanceRate(rosterAttendance);
 }

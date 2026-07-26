@@ -1,12 +1,23 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { getSafeAuthNextPath } from "@/lib/auth/safe-next-path";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/supabase";
 
+/**
+ * Auth gate for protected app surfaces only.
+ * Matcher is intentionally narrow so public academy/marketing pages skip session work.
+ * `/family/claim` stays public so booking invite links work without a session.
+ */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const isPublicFamilyClaim =
+    pathname === "/family/claim" || pathname.startsWith("/family/claim/");
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    if (pathname.startsWith("/dashboard")) {
+    if (
+      pathname.startsWith("/dashboard") ||
+      (pathname.startsWith("/family") && !isPublicFamilyClaim)
+    ) {
       return NextResponse.redirect(new URL("/login", request.url));
     }
     return NextResponse.next({ request });
@@ -31,6 +42,7 @@ export async function proxy(request: NextRequest) {
     },
   });
 
+  // Required for cookie refresh + auth gate. Only runs on matched routes.
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -48,15 +60,25 @@ export async function proxy(request: NextRequest) {
     return withSessionCookies(NextResponse.redirect(loginUrl));
   }
 
+  if (pathname.startsWith("/family") && !isPublicFamilyClaim && !user) {
+    const loginUrl = new URL("/login", request.url);
+    const nextPath = `${pathname}${request.nextUrl.search}`;
+    loginUrl.searchParams.set("next", nextPath);
+    return withSessionCookies(NextResponse.redirect(loginUrl));
+  }
+
   if ((pathname === "/login" || pathname === "/signup") && user) {
-    return withSessionCookies(NextResponse.redirect(new URL("/dashboard", request.url)));
+    const requested = request.nextUrl.searchParams.get("next");
+    const destination = getSafeAuthNextPath(
+      requested,
+      requested?.startsWith("/family") ? "/family" : "/dashboard",
+    );
+    return withSessionCookies(NextResponse.redirect(new URL(destination, request.url)));
   }
 
   return response;
 }
 
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|manifest\\.webmanifest|icon|apple-icon|app-icon(?:/.*)?|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
-  ],
+  matcher: ["/dashboard/:path*", "/family/:path*", "/login", "/signup"],
 };

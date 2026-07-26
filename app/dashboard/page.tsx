@@ -1,75 +1,126 @@
 import type { Metadata } from "next";
-import { DashboardStats } from "@/components/dashboard-stats";
-import { DashboardHeader } from "@/components/dashboard-header";
+import { ClipboardCheck, LandPlot, Trophy, Users } from "lucide-react";
+import { AttendanceAtRiskPanel } from "@/components/attendance-at-risk-panel";
+import { AttendanceThisMonthCard } from "@/components/attendance-this-month-card";
+import { CoachingIncomeSection } from "@/components/coaching-income-section";
+import { DashboardHeroBand } from "@/components/dashboard/dashboard-hero-band";
+import { DashboardSection } from "@/components/dashboard/dashboard-section";
+import { DashboardHomeSections } from "@/components/dashboard-home-sections";
+import { CoachFamilyHubPanel } from "@/components/coach-family-hub-panel";
+import { FamiliesWaitingPanel } from "@/components/families-waiting-panel";
+import { MatchDashboardWidgets } from "@/components/match-dashboard-widgets";
+import { TrainingDashboardWidgets } from "@/components/training-dashboard-widgets";
+import { FinanceDashboardWidgets } from "@/components/finance-dashboard-widgets";
+import { VideoDashboardWidgets } from "@/components/video-dashboard-widgets";
+import { FirstBookingCelebration } from "@/components/first-booking-celebration";
+import { FirstRunDashboard } from "@/components/first-run-dashboard";
 import { GettingStartedCard } from "@/components/getting-started-card";
+import { MilestoneCelebrations } from "@/components/milestone-celebrations";
+import { RevenueAtRiskPanel } from "@/components/revenue-at-risk-panel";
+import { getAuthenticatedUser, getServerSupabase } from "@/lib/auth/server";
+import { FOOTBALL_LABELS } from "@/lib/football-identity";
+import { isFirstRunDashboard } from "@/lib/onboarding";
+import { fetchOnboardingCounts } from "@/lib/onboarding-setup";
 
 export const metadata: Metadata = {
-  title: "Dashboard",
+  title: "Academy Dashboard",
 };
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  let showFirstRun = false;
+  const user = await getAuthenticatedUser();
+  if (user) {
+    try {
+      const supabase = await getServerSupabase();
+      const counts = await fetchOnboardingCounts(supabase, user.id);
+      showFirstRun = isFirstRunDashboard({
+        hasPlayer: counts.hasPlayer,
+        hasSession: counts.hasSession,
+        hasBooking: counts.hasBooking,
+      });
+    } catch {
+      showFirstRun = false;
+    }
+  }
+
+  if (showFirstRun) {
+    return <FirstRunDashboard />;
+  }
+
   return (
-    <div className="space-y-10">
-      <DashboardHeader />
-      <GettingStartedCard />
-      <DashboardStats />
+    <div className="space-y-8">
+      <DashboardHeroBand />
 
-      <section id="sessions" className="scroll-mt-24 space-y-4">
-        <h2 className="text-lg font-semibold tracking-tight">Upcoming sessions</h2>
-        <div className="glass-panel rounded-2xl p-6">
-          <ul className="divide-border divide-y text-sm">
-            {[
-              { t: "U12 Development — Skills", when: "Tue · 17:30 · Pitch A" },
-              { t: "U9 Mini kickers", when: "Wed · 09:00 · Dome" },
-              { t: "1:1 goalkeeper block", when: "Thu · 18:15 · Annex" },
-            ].map((row) => (
-              <li
-                key={row.t}
-                className="text-muted hover:text-foreground flex flex-col gap-1 py-4 transition-colors first:pt-0 last:pb-0 sm:flex-row sm:justify-between"
-              >
-                <span className="text-foreground font-medium">{row.t}</span>
-                <span>{row.when}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section id="parents" className="scroll-mt-24 space-y-4">
-          <h2 className="text-lg font-semibold tracking-tight">Parent pipeline</h2>
-          <div className="glass-panel rounded-2xl p-6 text-sm">
-            <p className="text-muted">
-              <span className="text-foreground font-medium">8</span> trials booked ·{" "}
-              <span className="text-foreground font-medium">3</span> awaiting payment ·{" "}
-              <span className="text-foreground font-medium">14</span> active subscriptions
-            </p>
-            <p className="text-muted mt-4 text-xs">
-              Snapshot of trials, payments due, and active subscriptions for your academy.
-            </p>
-          </div>
-        </section>
-
-        <section id="payments" className="scroll-mt-24 space-y-4">
-          <h2 className="text-lg font-semibold tracking-tight">Payments</h2>
-          <div className="glass-panel rounded-2xl p-6 text-sm">
-            <p className="text-muted">
-              <span className="text-foreground font-medium">£1,240</span> collected this week ·{" "}
-              <span className="text-foreground font-medium">2</span> failed renewals
-            </p>
-            <p className="text-muted mt-4 text-xs">
-              Weekly collection and failed renewals at a glance.
-            </p>
-          </div>
-        </section>
+      <div className="space-y-4 px-4 sm:px-6 lg:px-10">
+        <MilestoneCelebrations />
+        <FirstBookingCelebration />
+        <GettingStartedCard />
       </div>
 
-      <section id="settings" className="scroll-mt-24 space-y-4">
-        <h2 className="text-lg font-semibold tracking-tight">Academy settings</h2>
-        <div className="glass-panel rounded-2xl p-6 text-sm text-muted">
-          Configure branding, pitch availability, and staff roles from this section.
+      <div className="grid gap-8 px-4 sm:px-6 lg:grid-cols-12 lg:gap-6 lg:px-10 xl:gap-8">
+        <div className="space-y-8 lg:col-span-8">
+          <DashboardSection
+            id="pitch-week"
+            title="On the pitch this week"
+            description="Attendance and academy income at a glance."
+            icon={LandPlot}
+            variant="pitch"
+          >
+            <div className="grid gap-5 lg:grid-cols-2">
+              <AttendanceThisMonthCard />
+              <CoachingIncomeSection />
+            </div>
+          </DashboardSection>
+
+          <DashboardSection
+            id="match-training"
+            title="Match day & training"
+            description="Fixtures, session plans, video, and finance."
+            icon={Trophy}
+            variant="pitch"
+          >
+            <div className="grid gap-5 sm:grid-cols-2">
+              <MatchDashboardWidgets />
+              <TrainingDashboardWidgets />
+              <VideoDashboardWidgets />
+              <FinanceDashboardWidgets />
+            </div>
+          </DashboardSection>
+
+          <DashboardSection
+            id="operations"
+            title="Club ops"
+            description="Upcoming sessions, recent bookings, and quick actions."
+            icon={LandPlot}
+          >
+            <DashboardHomeSections />
+          </DashboardSection>
         </div>
-      </section>
+
+        <aside className="space-y-8 lg:col-span-4">
+          <DashboardSection
+            id="families"
+            title="Parents & payments"
+            description="Parents connected, payments on track."
+            icon={Users}
+          >
+            <div className="space-y-5">
+              <RevenueAtRiskPanel />
+              <FamiliesWaitingPanel />
+              <CoachFamilyHubPanel />
+            </div>
+          </DashboardSection>
+
+          <DashboardSection
+            id="attendance-alerts"
+            title={FOOTBALL_LABELS.attendance}
+            description="Players who may need a nudge."
+            icon={ClipboardCheck}
+          >
+            <AttendanceAtRiskPanel />
+          </DashboardSection>
+        </aside>
+      </div>
     </div>
   );
 }

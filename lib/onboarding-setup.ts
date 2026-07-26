@@ -11,11 +11,27 @@ export type OnboardingCoachContext = {
   academySlug: string | null;
 };
 
+type CreateAcademyRpcRow = {
+  academy_id: string;
+  academy_slug: string;
+  coach_slug: string;
+};
+
 function getDisplayName(academyName: string, email: string | null): string {
   const trimmed = academyName.trim();
   if (trimmed) return trimmed;
   if (email) return email.split("@")[0] ?? "Coach";
   return "Coach";
+}
+
+function isMissingRpcError(error: { message?: string; code?: string } | null): boolean {
+  if (!error) return false;
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    error.code === "PGRST202" ||
+    message.includes("could not find the function") ||
+    message.includes("create_or_update_coach_academy")
+  );
 }
 
 export async function loadOnboardingCoachContext(
@@ -52,6 +68,10 @@ export async function loadOnboardingCoachContext(
   };
 }
 
+/**
+ * Creates/updates academy + owner membership + booking profile atomically via RPC.
+ * Falls back to compensated client writes if the RPC is not yet migrated.
+ */
 export async function saveAcademyBusinessName(
   supabase: SupabaseClient,
   args: { coachId: string; email: string | null; businessName: string },
@@ -60,6 +80,41 @@ export async function saveAcademyBusinessName(
   if (!name) {
     throw new Error("Academy or business name is required.");
   }
+
+  const { data, error } = await supabase.rpc("create_or_update_coach_academy", {
+    p_name: name,
+    p_support_email: args.email,
+    p_primary_color: DEFAULT_ACADEMY_BRANDING.primary_color,
+    p_secondary_color: DEFAULT_ACADEMY_BRANDING.secondary_color,
+  });
+
+  if (!error) {
+    const row = (Array.isArray(data) ? data[0] : data) as CreateAcademyRpcRow | null;
+    if (!row?.academy_id) {
+      throw new Error("Could not create your academy.");
+    }
+    return {
+      coachId: args.coachId,
+      email: args.email,
+      academyId: row.academy_id,
+      coachSlug: row.coach_slug,
+      academySlug: row.academy_slug,
+    };
+  }
+
+  if (!isMissingRpcError(error)) {
+    throw new Error(error.message || "Could not create your academy.");
+  }
+
+  return saveAcademyBusinessNameCompensated(supabase, args);
+}
+
+/** Legacy path with compensation — used only when RPC migration is absent. */
+async function saveAcademyBusinessNameCompensated(
+  supabase: SupabaseClient,
+  args: { coachId: string; email: string | null; businessName: string },
+): Promise<OnboardingCoachContext> {
+  const name = args.businessName.trim();
 
   const { data: membership } = await supabase
     .from("academy_members")
@@ -70,6 +125,7 @@ export async function saveAcademyBusinessName(
     .maybeSingle();
 
   let academyId = (membership?.academy_id as string | undefined) ?? null;
+  let createdAcademyId: string | null = null;
 
   if (!academyId) {
     const { data: created, error: createError } = await supabase
@@ -87,6 +143,7 @@ export async function saveAcademyBusinessName(
     }
 
     academyId = created.id as string;
+    createdAcademyId = academyId;
 
     const { error: memberError } = await supabase.from("academy_members").insert({
       academy_id: academyId,
@@ -95,6 +152,7 @@ export async function saveAcademyBusinessName(
     });
 
     if (memberError) {
+      await supabase.from("academies").delete().eq("id", academyId);
       throw new Error(memberError.message);
     }
   } else {
@@ -109,7 +167,17 @@ export async function saveAcademyBusinessName(
   }
 
   const academySlug = buildAcademySlug(name, academyId);
-  await supabase.from("academies").update({ slug: academySlug }).eq("id", academyId);
+  const { error: slugError } = await supabase
+    .from("academies")
+    .update({ slug: academySlug })
+    .eq("id", academyId);
+
+  if (slugError) {
+    if (createdAcademyId) {
+      await supabase.from("academies").delete().eq("id", createdAcademyId);
+    }
+    throw new Error(slugError.message || "Could not publish your academy booking page.");
+  }
 
   const displayName = getDisplayName(name, args.email);
   const coachSlug = buildCoachSlug(displayName, args.coachId);
@@ -130,6 +198,9 @@ export async function saveAcademyBusinessName(
   );
 
   if (profileError) {
+    if (createdAcademyId) {
+      await supabase.from("academies").delete().eq("id", createdAcademyId);
+    }
     throw new Error(profileError.message);
   }
 
@@ -239,23 +310,55 @@ export async function createOnboardingSession(
 export async function fetchOnboardingCounts(
   supabase: SupabaseClient,
   coachId: string,
-): Promise<{ hasPlayer: boolean; hasTeam: boolean; hasSession: boolean }> {
-  const [players, teams, sessions] = await Promise.all([
-    supabase
-      .from("players")
-      .select("id", { count: "exact", head: true })
-      .eq("coach_id", coachId),
-    supabase.from("teams").select("id", { count: "exact", head: true }).eq("coach_id", coachId),
-    supabase
-      .from("sessions")
-      .select("id", { count: "exact", head: true })
-      .eq("coach_id", coachId),
-  ]);
+): Promise<{
+  hasPlayer: boolean;
+  hasTeam: boolean;
+  hasSession: boolean;
+  hasBooking: boolean;
+  hasAcademy: boolean;
+  hasBookingPage: boolean;
+}> {
+  const [players, teams, sessions, bookings, membership, profile] =
+    await Promise.all([
+      supabase
+        .from("players")
+        .select("id", { count: "exact", head: true })
+        .eq("coach_id", coachId),
+      supabase
+        .from("teams")
+        .select("id", { count: "exact", head: true })
+        .eq("coach_id", coachId),
+      supabase
+        .from("sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("coach_id", coachId),
+      supabase
+        .from("session_bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("coach_id", coachId)
+        .in("booking_status", ["confirmed", "waitlist"]),
+      supabase
+        .from("academy_members")
+        .select("academy_id", { count: "exact", head: true })
+        .eq("user_id", coachId),
+      supabase
+        .from("coach_public_profiles")
+        .select("slug, booking_enabled")
+        .eq("coach_id", coachId)
+        .maybeSingle(),
+    ]);
+
+  const hasBookingPage = Boolean(
+    profile.data?.slug && profile.data?.booking_enabled === true,
+  );
 
   return {
     hasPlayer: (players.count ?? 0) > 0,
     hasTeam: (teams.count ?? 0) > 0,
     hasSession: (sessions.count ?? 0) > 0,
+    hasBooking: (bookings.count ?? 0) > 0,
+    hasAcademy: (membership.count ?? 0) > 0,
+    hasBookingPage,
   };
 }
 

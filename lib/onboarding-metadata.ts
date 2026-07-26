@@ -58,7 +58,7 @@ export async function completeOnboarding(supabase: SupabaseClient): Promise<void
   await updateOnboardingMetadata(supabase, {
     completedAt: new Date().toISOString(),
     pausedAt: null,
-    currentStep: 6,
+    currentStep: 4,
   });
 }
 

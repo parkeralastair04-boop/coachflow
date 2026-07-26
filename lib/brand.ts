@@ -1,5 +1,12 @@
-/** Primary brand mark served from `/public/logo.png`. */
+/** Primary brand mark served from `/public/logo.png` (fallback raster). */
 export const BRAND_LOGO_SRC = "/logo.png";
+
+/**
+ * Optional theme-specific rasters. Place files at these paths when available.
+ * Until then, BrandLogo falls back to the SVG wordmark (preferred) or outlined PNG.
+ */
+export const BRAND_LOGO_LIGHT_SRC = "/logo-light.png";
+export const BRAND_LOGO_DARK_SRC = "/logo-dark.png";
 
 /** Tailwind classes for consistent default wordmark sizing and fallback image heights. */
 export const BRAND_LOGO_SIZES = {
@@ -38,6 +45,13 @@ export const BRAND_LOGO_SIZES = {
     icon: "size-[3.1rem]",
     text: "text-[2.15rem]",
     image: "h-[4.75rem]",
+  },
+  /** Parent booking header — academy logo only, kept modest. */
+  portalHeader: {
+    wrapper: "gap-2",
+    icon: "size-8",
+    text: "text-lg",
+    image: "h-10 max-h-12",
   },
   pwaBanner: {
     wrapper: "gap-2",

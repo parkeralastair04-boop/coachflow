@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { getStripeServerClient } from "@/lib/stripe";
 import {
   ensureStripeCustomerForParent,
@@ -8,6 +9,8 @@ import {
   type ParentPlayerRow,
   requireParentPaymentsAccess,
 } from "@/lib/parent-payments";
+import { isValidSubscriptionAmount } from "@/lib/validation/amounts";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type BillingInterval = "monthly" | "weekly";
 
@@ -26,6 +29,16 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.paymentsWrite,
+      route: "/api/payments/create-subscription",
+    });
+    if (limited) return limited;
+
+    const demoBlocked = rejectDemoMutation(request, "create a parent subscription");
+    if (demoBlocked) return demoBlocked;
+
     const access = await requireParentPaymentsAccess();
     if (!access.ok) return access.response;
 
@@ -46,9 +59,9 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!Number.isFinite(amount) || amount < 1) {
+    if (!isValidSubscriptionAmount(amount)) {
       return NextResponse.json(
-        { error: "amount must be at least 1 pence." },
+        { error: "amount must be at least 100 pence." },
         { status: 400 },
       );
     }
@@ -74,7 +87,7 @@ export async function POST(request: Request) {
     const customer = await ensureStripeCustomerForParent(safePlayer);
     const stripe = getStripeServerClient();
     const product = await stripe.products.create({
-      name: `CoachFlow coaching subscription - ${safePlayer.player_name}`,
+      name: `Awarix coaching subscription - ${safePlayer.player_name}`,
       metadata: {
         coach_id: access.coachId,
         player_id: playerId,
@@ -129,6 +142,12 @@ export async function POST(request: Request) {
       .single();
 
     if (insertError) {
+      // Compensate orphaned Stripe subscription when DB persistence fails.
+      try {
+        await stripe.subscriptions.cancel(subscription.id);
+      } catch {
+        // Best-effort; leave for webhook/ops reconciliation if cancel fails.
+      }
       return NextResponse.json({ error: insertError.message }, { status: 500 });
     }
 

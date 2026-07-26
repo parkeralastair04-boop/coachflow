@@ -1,4 +1,4 @@
--- Beta tester complimentary access (CoachFlow coach accounts).
+-- Beta tester complimentary access (Awarix coach accounts).
 -- Flag lives on auth.users.raw_user_meta_data.is_beta_tester (boolean).
 -- Revoking beta access only removes the metadata flag; player/session data is untouched.
 

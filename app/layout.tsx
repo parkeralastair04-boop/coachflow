@@ -1,21 +1,61 @@
 import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import { PwaInstallBanner } from "@/components/pwa-install-banner";
 import { ThemeColorMeta } from "@/components/theme-color-meta";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ToastProvider } from "@/components/ui/toast";
+import { BRAND } from "@/lib/brand-identity";
+import { getMetadataBase } from "@/lib/site-url";
 import "./globals.css";
 
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+const siteTitle = `${BRAND.name} — Football intelligence for coaches`;
+const siteDescription = BRAND.shortDescription;
+
 export const metadata: Metadata = {
-  applicationName: "CoachFlow",
+  metadataBase: getMetadataBase(),
+  applicationName: BRAND.name,
   title: {
-    default: "CoachFlow — The operating system for football coaching businesses",
-    template: "%s · CoachFlow",
+    default: siteTitle,
+    template: `%s · ${BRAND.name}`,
   },
-  description:
-    "The AI-powered operating system for football coaches.",
+  description: siteDescription,
+  keywords: [
+    "football coaching software",
+    "academy management",
+    "player development",
+    "AI coaching insights",
+    "youth football",
+    "Awarix",
+  ],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: siteTitle,
+    description: siteDescription,
+    type: "website",
+    siteName: BRAND.name,
+    url: "/",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteTitle,
+    description: siteDescription,
+  },
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    title: "CoachFlow",
+    title: BRAND.name,
     statusBarStyle: "black-translucent",
   },
   icons: {
@@ -39,12 +79,18 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full">
+    <html
+      lang="en"
+      className={`h-full antialiased ${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="min-h-full font-sans">
         <ThemeProvider>
-          <ThemeColorMeta />
-          {children}
-          <PwaInstallBanner />
+          <ToastProvider>
+            <ThemeColorMeta />
+            {children}
+            <PwaInstallBanner />
+          </ToastProvider>
         </ThemeProvider>
       </body>
     </html>

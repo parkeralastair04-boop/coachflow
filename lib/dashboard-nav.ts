@@ -1,26 +1,29 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  BarChart3,
+  Activity,
   Bell,
   BellRing,
-  Brain,
-  Building2,
-  CalendarRange,
-  CalendarDays,
   ClipboardList,
+  ClipboardPen,
+  Cone,
   CreditCard,
-  FileText,
+  Film,
+  Flag,
   Gift,
   HelpCircle,
+  Inbox,
+  LandPlot,
   LayoutDashboard,
+  Mail,
+  Newspaper,
   Palette,
   PoundSterling,
   Rocket,
   Settings,
+  Shirt,
   Tent,
-  UserSquare2,
-  Shield,
-  Users,
+  Trophy,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import type { FeatureKey } from "@/lib/subscription";
@@ -48,57 +51,113 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     icon: LayoutDashboard,
     items: [
       { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { href: "/dashboard#getting-started", label: "Getting Started", icon: Rocket },
+      { href: "/dashboard#getting-started", label: "Match-Ready", icon: Rocket },
       { href: "/dashboard/help", label: "Help & Support", icon: HelpCircle },
     ],
   },
   {
     id: "coaching",
-    title: "Coaching Operations",
-    icon: Users,
+    title: "On the Pitch",
+    icon: LandPlot,
     items: [
-      { href: "/dashboard/players", label: "Players", icon: UserSquare2, feature: "players" },
-      { href: "/dashboard/teams", label: "Teams", icon: Shield },
+      { href: "/dashboard/players", label: "Active Squad", icon: Shirt, feature: "players" },
+      { href: "/dashboard/teams", label: "Squads", icon: Flag },
       {
         href: "/dashboard/availability",
-        label: "Booking & Availability",
-        icon: CalendarRange,
+        label: "When you coach",
+        icon: LandPlot,
         feature: "sessions",
       },
-      { href: "/dashboard/sessions", label: "Sessions", icon: CalendarDays, feature: "sessions" },
+      {
+        href: "/dashboard/sessions",
+        label: "Training Sessions",
+        icon: Cone,
+        feature: "sessions",
+      },
       {
         href: "/dashboard/registers",
-        label: "Registers",
+        label: "Session Registers",
         icon: ClipboardList,
         feature: "group_registers",
       },
-      { href: "/dashboard/camps", label: "Camps", icon: Tent, feature: "camps" },
+      { href: "/dashboard/camps", label: "Holiday Camps", icon: Tent, feature: "camps" },
+      {
+        href: "/dashboard/matches",
+        label: "Match Centre",
+        icon: Trophy,
+        feature: "match_centre",
+      },
+      {
+        href: "/dashboard/training",
+        label: "Training Planner",
+        icon: ClipboardPen,
+        feature: "training_planner",
+      },
+      {
+        href: "/dashboard/video",
+        label: "Video Analysis",
+        icon: Film,
+        feature: "video_analysis",
+      },
     ],
   },
   {
     id: "reports-insights",
-    title: "Reports & Insights",
-    icon: Brain,
+    title: "Development & Performance",
+    icon: Activity,
     items: [
-      { href: "/dashboard/reports", label: "Reports", icon: FileText, feature: "reports" },
-      { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3, feature: "analytics" },
-      { href: "/dashboard/insights", label: "AI Insights", icon: Brain, feature: "insights" },
+      {
+        href: "/dashboard/reports",
+        label: "Player Development",
+        icon: ClipboardPen,
+        feature: "reports",
+      },
+      {
+        href: "/dashboard/analytics",
+        label: "Performance Insights",
+        icon: Activity,
+        feature: "analytics",
+      },
+      {
+        href: "/dashboard/insights",
+        label: "AI Coaching Insights",
+        icon: Activity,
+        feature: "insights",
+      },
     ],
   },
   {
     id: "communication",
-    title: "Communication",
+    title: "Club Communication",
     icon: BellRing,
     items: [
       {
+        href: "/dashboard/communication",
+        label: "Parent Updates",
+        icon: Mail,
+        feature: "parent_emails",
+      },
+      {
+        href: "/dashboard/news",
+        label: "Academy News",
+        icon: Newspaper,
+        feature: "academy_news",
+      },
+      {
+        href: "/dashboard/enquiries",
+        label: "Family Enquiries",
+        icon: Inbox,
+        feature: "academy_enquiries",
+      },
+      {
         href: "/dashboard/automations",
-        label: "Automations",
+        label: "Automatic Messages",
         icon: BellRing,
         feature: "automations",
       },
       {
         href: "/dashboard/settings/notifications",
-        label: "Notifications",
+        label: "Pitch-Side Alerts",
         icon: Bell,
         feature: "push_notifications",
       },
@@ -106,7 +165,7 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
   },
   {
     id: "payments-growth",
-    title: "Payments & Growth",
+    title: "Academy Finance",
     icon: PoundSterling,
     items: [
       {
@@ -114,6 +173,12 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
         label: "Parent Payments",
         icon: Wallet,
         feature: "parent_payments",
+      },
+      {
+        href: "/dashboard/finance",
+        label: "Finance Centre",
+        icon: Activity,
+        feature: "finance_centre",
       },
       { href: "/dashboard/referrals", label: "Referrals", icon: Gift, feature: "referrals" },
     ],
@@ -125,10 +190,10 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
     items: [
       {
         href: "/dashboard/settings/account",
-        label: "Account",
-        icon: Settings,
+        label: "Profile",
+        icon: UserRound,
       },
-      { href: "/dashboard/billing", label: "Billing", icon: CreditCard },
+      { href: "/dashboard/billing", label: "Your Awarix plan", icon: CreditCard },
       {
         href: "/dashboard/settings/appearance",
         label: "Appearance",
@@ -137,14 +202,56 @@ export const DASHBOARD_NAV_SECTIONS: DashboardNavSection[] = [
       {
         href: "/dashboard/academy",
         label: "Academy Settings",
-        icon: Building2,
+        icon: Flag,
         feature: "white_label",
       },
     ],
   },
 ];
 
-export const SIDEBAR_STORAGE_KEY = "coachflow:sidebar-sections:v2";
+export const SIDEBAR_STORAGE_KEY = "awarix:sidebar-sections:v2";
+
+/** Shown under nav items until the coach receives their first parent booking. */
+export const SETUP_PHASE_NAV_HINTS: Partial<Record<string, string>> = {
+  "/dashboard/analytics": "Best after your first parent booking",
+  "/dashboard/camps": "Set up once regular sessions are running",
+  "/dashboard/referrals": "Invite other coaches when you're live",
+  "/dashboard/automations": "Turn on after parents start booking",
+  "/dashboard/insights": "Unlocks once you have session data",
+};
+
+/** Nav section ids visible while the activation critical path is incomplete. */
+export const SETUP_PHASE_NAV_SECTION_IDS = new Set([
+  "overview",
+  "coaching",
+  "settings",
+]);
+
+/** Href allowlist during setup (critical path + essentials). */
+export const SETUP_PHASE_NAV_HREFS = new Set([
+  "/dashboard",
+  "/dashboard#getting-started",
+  "/dashboard/help",
+  "/dashboard/players",
+  "/dashboard/teams",
+  "/dashboard/sessions",
+  "/dashboard/availability",
+  "/dashboard/settings/account",
+  "/dashboard/settings/appearance",
+  "/dashboard/billing",
+]);
+
+export function filterNavForSetupPhase(
+  sections: DashboardNavSection[],
+): DashboardNavSection[] {
+  return sections
+    .filter((section) => SETUP_PHASE_NAV_SECTION_IDS.has(section.id))
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => SETUP_PHASE_NAV_HREFS.has(item.href)),
+    }))
+    .filter((section) => section.items.length > 0);
+}
 
 const DEFAULT_EXPANDED_SECTIONS = new Set(["overview", "coaching", "settings"]);
 

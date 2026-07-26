@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
+import { enforceBotProtection } from "@/lib/bot-protection";
+import { HONEYPOT_FIELD_NAME } from "@/lib/bot-protection-shared";
+import { enforceRateLimit, getRequestIp, hashIp, RATE_LIMITS } from "@/lib/rate-limit";
+import { apiError, safeApiError } from "@/lib/api-response";
+import { logAbuseEvent } from "@/lib/abuse-log";
 import {
   buildBookingEmailHtml,
   buildBookingEmailText,
+  getSessionBookingEmailSubject,
 } from "@/lib/booking-emails";
 import { type PublicSessionRow } from "@/lib/booking-system";
 import {
@@ -9,8 +15,16 @@ import {
   loadPublicBookingPayload,
   type PublicPortalTenant,
 } from "@/lib/public-booking";
+import { prepareParentPortalInvite } from "@/lib/parent-account-claim";
+import { recordParentJourneyEvent } from "@/lib/parent-journey-events";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { getStripeServerClient } from "@/lib/stripe";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { isValidEmail } from "@/lib/validation/email";
+import { normalisePhone } from "@/lib/validation/phone";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
+
+const CHECKOUT_HOLD_SECONDS = 30 * 60;
 
 type BookingBody = {
   sessionId?: string;
@@ -20,6 +34,8 @@ type BookingBody = {
   parentEmail?: string;
   parentPhone?: string;
   notes?: string;
+  turnstileToken?: string;
+  [key: string]: unknown;
 };
 
 type CreateBookingRpcRow = {
@@ -74,27 +90,55 @@ function getPortalUrl(origin: string, tenant: PublicPortalTenant) {
     : `${origin}/academy/${tenant.slug}/book`;
 }
 
+function getStripeCheckoutExpiry() {
+  const stripeCheckoutExpiresAt = Math.floor(Date.now() / 1000) + CHECKOUT_HOLD_SECONDS;
+  return {
+    stripeCheckoutExpiresAt,
+    checkoutExpiresAt: new Date(stripeCheckoutExpiresAt * 1000).toISOString(),
+  };
+}
+
 async function sendParentEmail(args: {
   kind: "confirmed" | "waitlist";
+  paid?: boolean;
+  supportEmail?: string | null;
   parentEmail: string;
   parentName: string;
   childName: string;
   academyName: string;
   primaryColor: string;
   session: PublicSessionRow;
-}) {
+  playerId?: string | null;
+  bookingId?: string | null;
+}): Promise<{ familyPortalUrl: string | null; inviteKind: "claim" | "sign_in" | null }> {
+  let portalInviteUrl: string | null = null;
+  let portalInviteKind: "claim" | "sign_in" | null = null;
+
   try {
+    try {
+      const invite = await prepareParentPortalInvite({
+        email: args.parentEmail,
+        playerId: args.playerId,
+        bookingId: args.bookingId,
+        childName: args.childName,
+        academyName: args.academyName,
+      });
+      portalInviteUrl = invite.url;
+      portalInviteKind = invite.kind;
+    } catch {
+      // Invite failure must not block confirmation email.
+    }
+
     const resend = getResendServerClient();
     const sessionLabel = getSessionLabel(args.session);
     await resend.emails.send({
       from: resendFromEmail,
       to: args.parentEmail,
-      subject:
-        args.kind === "confirmed"
-          ? `Booking confirmed for ${args.childName}`
-          : `Waitlist update for ${args.childName}`,
+      subject: getSessionBookingEmailSubject({ kind: args.kind, paid: args.paid }),
       html: buildBookingEmailHtml({
         kind: args.kind,
+        paid: args.paid,
+        supportEmail: args.supportEmail,
         academyName: args.academyName,
         primaryColor: args.primaryColor,
         parentName: args.parentName,
@@ -102,9 +146,13 @@ async function sendParentEmail(args: {
         sessionLabel,
         sessionDate: formatSessionDate(args.session.session_date),
         location: args.session.location,
+        portalInviteUrl,
+        portalInviteKind,
       }),
       text: buildBookingEmailText({
         kind: args.kind,
+        paid: args.paid,
+        supportEmail: args.supportEmail,
         academyName: args.academyName,
         primaryColor: args.primaryColor,
         parentName: args.parentName,
@@ -112,11 +160,27 @@ async function sendParentEmail(args: {
         sessionLabel,
         sessionDate: formatSessionDate(args.session.session_date),
         location: args.session.location,
+        portalInviteUrl,
+        portalInviteKind,
       }),
     });
+
+    if (args.kind === "confirmed") {
+      await recordParentJourneyEvent({
+        event: "booking_completed",
+        email: args.parentEmail,
+        metadata: {
+          source: "public_booking",
+          bookingId: args.bookingId ?? null,
+          paid: args.paid !== false,
+        },
+      });
+    }
   } catch {
     // Booking creation should still succeed if email delivery is temporarily unavailable.
   }
+
+  return { familyPortalUrl: portalInviteUrl, inviteKind: portalInviteKind };
 }
 
 export async function GET(request: Request) {
@@ -142,6 +206,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const route = "/api/bookings";
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.publicBooking,
+      route,
+    });
+    if (limited) return limited;
+
     const tenant = getTenantFromRequest(request);
     if (!tenant) {
       return NextResponse.json(
@@ -150,16 +222,69 @@ export async function POST(request: Request) {
       );
     }
 
+    const demoResponse = rejectDemoMutation(
+      request,
+      "create a live booking",
+      tenant.kind === "academy"
+        ? { academySlug: tenant.slug }
+        : { coachSlug: tenant.slug },
+    );
+    if (demoResponse) {
+      return NextResponse.json({
+        demo: true,
+        bookingStatus: "confirmed",
+        paymentStatus: "not_required",
+        message:
+          "Demo booking accepted. No payment was taken and no email was sent.",
+        checkoutUrl: null,
+      });
+    }
+
     const body = (await request.json()) as BookingBody;
+
+    const bot = await enforceBotProtection({
+      request,
+      route,
+      input: {
+        honeypot:
+          typeof body[HONEYPOT_FIELD_NAME] === "string"
+            ? (body[HONEYPOT_FIELD_NAME] as string)
+            : "",
+        turnstileToken:
+          typeof body.turnstileToken === "string" ? body.turnstileToken : null,
+      },
+    });
+    if (!bot.ok) {
+      if (bot.code === "honeypot") {
+        return NextResponse.json({ ok: true, honeypot: true });
+      }
+      logAbuseEvent({
+        event: "bot_blocked",
+        route,
+        ipHash: hashIp(getRequestIp(request)),
+        detail: bot.code,
+      });
+      return apiError(400, bot.message, "bot_blocked");
+    }
+
     const sessionId = body.sessionId?.trim();
-    const childName = body.childName?.trim();
-    const parentName = body.parentName?.trim() ?? "";
-    const parentEmail = body.parentEmail?.trim();
-    const parentPhone = body.parentPhone?.trim() ?? "";
+    const childName = typeof body.childName === "string" ? body.childName.trim() : "";
+    const parentName = typeof body.parentName === "string" ? body.parentName.trim() : "";
+    const parentEmail = typeof body.parentEmail === "string" ? body.parentEmail.trim() : "";
+    const parentPhone = normalisePhone(
+      typeof body.parentPhone === "string" ? body.parentPhone : null,
+    );
 
     if (!sessionId || !childName || !parentEmail) {
       return NextResponse.json(
         { error: "Session, child name, and parent email are required." },
+        { status: 400 },
+      );
+    }
+
+    if (!isValidEmail(parentEmail)) {
+      return NextResponse.json(
+        { error: "Please enter a valid email address." },
         { status: 400 },
       );
     }
@@ -177,8 +302,9 @@ export async function POST(request: Request) {
       );
     }
 
-    const academyName = payload.portal.display_name ?? "CoachFlow";
+    const academyName = payload.portal.display_name ?? "Awarix";
     const primaryColor = payload.portal.primary_color ?? "#10b981";
+    const supportEmail = payload.portal.support_email?.trim() || null;
     const supabase = createPublicSupabaseClient();
 
     const { data, error } = await supabase.rpc("create_public_session_booking", {
@@ -187,7 +313,7 @@ export async function POST(request: Request) {
       p_child_date_of_birth: body.childDateOfBirth || null,
       p_parent_name: parentName || null,
       p_parent_email: parentEmail,
-      p_parent_phone: parentPhone || null,
+      p_parent_phone: parentPhone,
       p_notes: body.notes?.trim() || null,
     });
 
@@ -204,14 +330,17 @@ export async function POST(request: Request) {
     }
 
     if (booking.booking_status === "waitlist") {
-      await sendParentEmail({
+      const invite = await sendParentEmail({
         kind: "waitlist",
+        supportEmail,
         parentEmail,
         parentName,
         childName,
         academyName,
         primaryColor,
         session: selectedSession,
+        playerId: booking.player_id,
+        bookingId: booking.booking_id,
       });
 
       return NextResponse.json({
@@ -219,18 +348,24 @@ export async function POST(request: Request) {
         playerId: booking.player_id,
         status: booking.booking_status,
         checkoutUrl: null,
+        familyPortalUrl: invite.familyPortalUrl,
+        familyInviteKind: invite.inviteKind,
       });
     }
 
     if (booking.amount <= 0 || booking.payment_status === "not_required") {
-      await sendParentEmail({
+      const invite = await sendParentEmail({
         kind: "confirmed",
+        paid: false,
+        supportEmail,
         parentEmail,
         parentName,
         childName,
         academyName,
         primaryColor,
         session: selectedSession,
+        playerId: booking.player_id,
+        bookingId: booking.booking_id,
       });
 
       return NextResponse.json({
@@ -238,16 +373,20 @@ export async function POST(request: Request) {
         playerId: booking.player_id,
         status: booking.booking_status,
         checkoutUrl: null,
+        familyPortalUrl: invite.familyPortalUrl,
+        familyInviteKind: invite.inviteKind,
       });
     }
 
     const sessionLabel = getSessionLabel(selectedSession);
+    const { stripeCheckoutExpiresAt, checkoutExpiresAt } = getStripeCheckoutExpiry();
     const stripe = getStripeServerClient();
     const origin = new URL(request.url).origin;
     const portalUrl = getPortalUrl(origin, tenant);
     const stripeSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: parentEmail,
+      expires_at: stripeCheckoutExpiresAt,
       line_items: [
         {
           quantity: 1,
@@ -281,13 +420,48 @@ export async function POST(request: Request) {
       },
     });
 
+    const admin = createAdminClient();
+    const { error: attachError } = await admin.rpc(
+      "attach_stripe_checkout_to_session_booking",
+      {
+        p_booking_id: booking.booking_id,
+        p_stripe_checkout_session_id: stripeSession.id,
+        p_checkout_expires_at: stripeCheckoutExpiresAt,
+      },
+    );
+
+    if (attachError) {
+      // Compensate: expire Stripe Checkout and release the pending hold so we
+      // never leave a live Checkout URL without a linked booking row.
+      try {
+        await stripe.checkout.sessions.expire(stripeSession.id);
+      } catch {
+        // Best-effort; session may already be expired.
+      }
+      try {
+        await admin.rpc("expire_pending_session_booking", {
+          p_booking_id: booking.booking_id,
+        });
+      } catch {
+        // Best-effort capacity release.
+      }
+      return NextResponse.json({ error: attachError.message }, { status: 500 });
+    }
+
     return NextResponse.json({
       bookingId: booking.booking_id,
       playerId: booking.player_id,
       status: booking.booking_status,
       checkoutUrl: stripeSession.url ?? null,
+      checkoutExpiresAt,
     });
   } catch (error: unknown) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
+    return safeApiError({
+      request,
+      route: "/api/bookings",
+      error,
+      clientMessage:
+        "We couldn't complete your booking right now. Please try again.",
+    });
   }
 }

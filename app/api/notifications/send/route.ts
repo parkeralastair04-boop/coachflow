@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
+import { apiError, safeApiError } from "@/lib/api-response";
+import { logAbuseEvent } from "@/lib/abuse-log";
 import { getMinimumPlanForGateFeature } from "@/lib/feature-definitions";
+import { recordJobOutcome } from "@/lib/jobs/monitor";
 import {
   PUSH_NOTIFICATION_TEMPLATES,
   sendPushNotification,
   type PushNotificationType,
 } from "@/lib/push-notifications";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { hasFeatureAccess } from "@/lib/subscription";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -19,6 +23,7 @@ type SendNotificationBody = {
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const route = "/api/notifications/send";
   try {
     const supabase = await createServerSupabaseClient();
     const {
@@ -26,21 +31,25 @@ export async function POST(request: Request) {
       error: userError,
     } = await supabase.auth.getUser();
 
-    if (userError) {
-      return NextResponse.json({ error: userError.message }, { status: 401 });
+    if (userError || !user) {
+      return apiError(401, "You must be signed in to send notifications.", "unauthorized");
     }
-    if (!user) {
-      return NextResponse.json(
-        { error: "You must be signed in to send notifications." },
-        { status: 401 },
-      );
-    }
+
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.notifications,
+      subject: user.id,
+      actorId: user.id,
+      route,
+    });
+    if (limited) return limited;
 
     const allowed = await hasFeatureAccess("push_notifications");
     if (!allowed) {
       return NextResponse.json(
         {
-          error: "Push notifications require CoachFlow Academy.",
+          error: "Push notifications require Awarix Academy.",
+          code: "forbidden",
           requiredPlan: getMinimumPlanForGateFeature("push_notifications"),
         },
         { status: 403 },
@@ -48,14 +57,27 @@ export async function POST(request: Request) {
     }
 
     const body = (await request.json()) as SendNotificationBody;
-    const targetUserId = body.userId ?? user.id;
+
+    // Never honour client-supplied target user ids — notifications are self-only.
+    if (body.userId && body.userId !== user.id) {
+      logAbuseEvent({
+        event: "ownership_denied",
+        route,
+        actorId: user.id,
+        detail: "cross_user_notification_blocked",
+      });
+      return apiError(
+        403,
+        "You can only send notifications to your own devices.",
+        "ownership_denied",
+      );
+    }
+
+    const targetUserId = user.id;
     const type = body.type ?? "upcoming_sessions";
     const template = PUSH_NOTIFICATION_TEMPLATES[type];
     if (!template) {
-      return NextResponse.json(
-        { error: "Unsupported notification type." },
-        { status: 400 },
-      );
+      return apiError(400, "Unsupported notification type.", "validation_failed");
     }
 
     const { data: preferences, error: prefError } = await supabase
@@ -65,9 +87,21 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (prefError) {
-      return NextResponse.json({ error: prefError.message }, { status: 500 });
+      await recordJobOutcome({
+        job: "notification_send",
+        outcome: "failed",
+        message: "Unable to load notification preferences",
+        error: prefError,
+      });
+      return apiError(500, "Unable to load notification preferences.", "internal_error");
     }
     if (preferences && preferences[type] === false) {
+      await recordJobOutcome({
+        job: "notification_send",
+        outcome: "skipped",
+        message: "Notification skipped by preference",
+        metadata: { type },
+      });
       return NextResponse.json({ skipped: true, reason: "preference_disabled" });
     }
 
@@ -77,7 +111,13 @@ export async function POST(request: Request) {
       .eq("user_id", targetUserId);
 
     if (tokensError) {
-      return NextResponse.json({ error: tokensError.message }, { status: 500 });
+      await recordJobOutcome({
+        job: "notification_send",
+        outcome: "failed",
+        message: "Unable to load device tokens",
+        error: tokensError,
+      });
+      return apiError(500, "Unable to load device tokens.", "internal_error");
     }
 
     const result = await sendPushNotification({
@@ -87,16 +127,20 @@ export async function POST(request: Request) {
       url: body.url,
     });
 
+    await recordJobOutcome({
+      job: "notification_send",
+      outcome: "success",
+      message: "Push notification send completed",
+      metadata: { type, tokenCount: tokens?.length ?? 0 },
+    });
+
     return NextResponse.json(result);
   } catch (error: unknown) {
-    const message =
-      typeof error === "object" &&
-      error !== null &&
-      "message" in error &&
-      typeof error.message === "string"
-        ? error.message
-        : "Unable to send push notification.";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return safeApiError({
+      request,
+      route,
+      error,
+      clientMessage: "Unable to send push notification.",
+    });
   }
 }

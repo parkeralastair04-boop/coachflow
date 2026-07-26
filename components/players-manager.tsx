@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Loader2,
   Mail,
@@ -8,10 +9,13 @@ import {
   Phone,
   Save,
   Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import { FeaturePageHeader } from "@/components/feature-page-header";
+import { EmptyState } from "@/components/empty-state";
+import { footballEmptyPreset } from "@/lib/football-identity";
+import { FormErrorAlert } from "@/components/form-error-alert";
+import { PlayerDevelopmentPanel } from "@/components/player-development-panel";
 import {
   PLAYER_POSITION_OPTIONS,
   PREFERRED_FOOT_OPTIONS,
@@ -22,7 +26,11 @@ import {
 } from "@/lib/player-profile";
 import { getPlayerTeams, getTeamDisplayName, type TeamSummary } from "@/lib/team-management";
 import { createClient } from "@/lib/supabase";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { isValidEmail } from "@/lib/validation/email";
+import { normalisePhone } from "@/lib/validation/phone";
 import { cn } from "@/lib/utils";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type PlayerRow = {
   id: string;
@@ -68,18 +76,6 @@ const defaultFormState: PlayerFormState = {
 const PLAYER_SELECT =
   "id, coach_id, academy_id, player_name, date_of_birth, preferred_foot, primary_position, secondary_positions, parent_name, parent_email, parent_phone, notes, created_at, team_players(team:teams(id, team_name, age_group, team_color))";
 
-function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "An unexpected error occurred.";
-}
-
 function formatDate(value: string | null): string {
   if (!value) return "N/A";
   const parsed = new Date(value);
@@ -111,6 +107,10 @@ function normalizePlayerRow(player: Partial<PlayerRow> & { id: string }): Player
 }
 
 export function PlayersManager() {
+  const searchParams = useSearchParams();
+  const focusPlayerId = searchParams.get("player")?.trim() ?? null;
+  const focusHandledRef = useRef<string | null>(null);
+
   const [form, setForm] = useState<PlayerFormState>(defaultFormState);
   const [coachId, setCoachId] = useState<string | null>(null);
   const [academyId, setAcademyId] = useState<string | null>(null);
@@ -121,8 +121,16 @@ export function PlayersManager() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [playerNameError, setPlayerNameError] = useState<string | null>(null);
+  const [parentEmailError, setParentEmailError] = useState<string | null>(null);
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
 
   const hasPlayers = useMemo(() => players.length > 0, [players.length]);
+
+  const selectedPlayer = useMemo(
+    () => players.find((player) => player.id === selectedPlayerId) ?? null,
+    [players, selectedPlayerId],
+  );
 
   const sortedPlayers = useMemo(
     () =>
@@ -151,13 +159,16 @@ export function PlayersManager() {
         .order("created_at", { ascending: false });
 
       if (playersError) {
-        setError(playersError.message);
-        return;
+        setError(sanitizeDashboardSaveError(playersError, { logLabel: "players-load" }));
+        return [];
       }
 
-      setPlayers(((data ?? []) as PlayerRow[]).map(normalizePlayerRow));
+      const normalized = ((data ?? []) as PlayerRow[]).map(normalizePlayerRow);
+      setPlayers(normalized);
+      return normalized;
     } catch (caughtError: unknown) {
-      setError(getErrorMessage(caughtError));
+      setError(sanitizeDashboardSaveError(caughtError, { logLabel: "players-load" }));
+      return [];
     } finally {
       setLoadingPlayers(false);
     }
@@ -176,7 +187,7 @@ export function PlayersManager() {
 
         if (cancelled) return;
         if (userError) {
-          setError(userError.message);
+          setError(sanitizeDashboardSaveError(userError, { logLabel: "players-auth" }));
           setLoadingPlayers(false);
           return;
         }
@@ -196,10 +207,19 @@ export function PlayersManager() {
           .maybeSingle();
         setAcademyId((membership?.academy_id as string | undefined) ?? null);
 
-        await loadPlayers(user.id);
+        const loadedPlayers = await loadPlayers(user.id);
+
+        if (
+          !cancelled &&
+          focusPlayerId &&
+          loadedPlayers.some((player) => player.id === focusPlayerId)
+        ) {
+          focusHandledRef.current = focusPlayerId;
+          setSelectedPlayerId(focusPlayerId);
+        }
       } catch (caughtError: unknown) {
         if (!cancelled) {
-          setError(getErrorMessage(caughtError));
+          setError(sanitizeDashboardSaveError(caughtError, { logLabel: "players-load" }));
           setLoadingPlayers(false);
         }
       }
@@ -209,17 +229,26 @@ export function PlayersManager() {
     return () => {
       cancelled = true;
     };
-  }, [loadPlayers]);
+  }, [focusPlayerId, loadPlayers]);
+
+  function handleSelectPlayer(playerId: string) {
+    setSelectedPlayerId(playerId);
+  }
 
   function resetForm() {
     setForm(defaultFormState);
     setEditingPlayerId(null);
     setSubmitError(null);
+    setPlayerNameError(null);
+    setParentEmailError(null);
   }
 
   function startEditing(player: PlayerRow) {
+    setSelectedPlayerId(player.id);
     setEditingPlayerId(player.id);
     setSubmitError(null);
+    setPlayerNameError(null);
+    setParentEmailError(null);
     setForm({
       playerName: player.player_name,
       dateOfBirth: player.date_of_birth ?? "",
@@ -251,10 +280,24 @@ export function PlayersManager() {
       setSubmitError("You must be signed in to save players.");
       return;
     }
+
+    let valid = true;
     if (!form.playerName.trim()) {
-      setSubmitError("Player name is required.");
-      return;
+      setPlayerNameError("Player name is required.");
+      valid = false;
+    } else {
+      setPlayerNameError(null);
     }
+
+    const trimmedParentEmail = form.parentEmail.trim();
+    if (trimmedParentEmail && !isValidEmail(trimmedParentEmail)) {
+      setParentEmailError("Please enter a valid email address.");
+      valid = false;
+    } else {
+      setParentEmailError(null);
+    }
+
+    if (!valid) return;
 
     setSubmitError(null);
     setSaving(true);
@@ -272,8 +315,8 @@ export function PlayersManager() {
           (position) => position !== form.primaryPosition,
         ),
         parent_name: form.parentName.trim() || null,
-        parent_email: form.parentEmail.trim() || null,
-        parent_phone: form.parentPhone.trim() || null,
+        parent_email: trimmedParentEmail || null,
+        parent_phone: normalisePhone(form.parentPhone),
         notes: form.notes.trim() || null,
       };
 
@@ -287,7 +330,7 @@ export function PlayersManager() {
           .single();
 
         if (updateError) {
-          setSubmitError(updateError.message);
+          setSubmitError(sanitizeDashboardSaveError(updateError, { logLabel: "players-save" }));
           return;
         }
 
@@ -311,7 +354,7 @@ export function PlayersManager() {
         .single();
 
       if (insertError) {
-        setSubmitError(insertError.message);
+        setSubmitError(sanitizeDashboardSaveError(insertError, { logLabel: "players-save" }));
         return;
       }
 
@@ -323,7 +366,7 @@ export function PlayersManager() {
         resetForm();
       }
     } catch (caughtError: unknown) {
-      setSubmitError(getErrorMessage(caughtError));
+      setSubmitError(sanitizeDashboardSaveError(caughtError, { logLabel: "players-save" }));
     } finally {
       setSaving(false);
     }
@@ -347,7 +390,7 @@ export function PlayersManager() {
         .eq("coach_id", coachId);
 
       if (deleteError) {
-        setSubmitError(deleteError.message);
+        setSubmitError(sanitizeDashboardSaveError(deleteError, { logLabel: "players-delete" }));
         return;
       }
 
@@ -356,21 +399,21 @@ export function PlayersManager() {
         resetForm();
       }
     } catch (caughtError: unknown) {
-      setSubmitError(getErrorMessage(caughtError));
+      setSubmitError(sanitizeDashboardSaveError(caughtError, { logLabel: "players-save" }));
     } finally {
       setDeletingId(null);
     }
   }
 
   return (
-    <div className="space-y-8">
+    <div className="page-content-enter space-y-8">
       <FeaturePageHeader
         featureKey="players"
-        title="Player CRM"
-        subtitle="Manage player profiles, parent contacts, and football attributes in one place."
+        title="Active Squad"
+        subtitle="Player profiles, parent contacts, and football attributes for every squad."
       />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold tracking-tight">
@@ -378,14 +421,14 @@ export function PlayersManager() {
             </h2>
             <p className="text-muted mt-1 text-sm">
               Capture key football profile details once so they stay available across
-              reports, insights, and future squad planning.
+              reports, registers, and parent updates.
             </p>
           </div>
           {editingPlayerId ? (
             <button
               type="button"
               onClick={resetForm}
-              className="border-border hover:bg-black/[0.03] inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+              className="border-border hover:bg-surface-hover inline-flex h-10 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
             >
               <X className="mr-2 size-4" aria-hidden />
               Cancel edit
@@ -402,12 +445,24 @@ export function PlayersManager() {
               id="playerName"
               required
               value={form.playerName}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, playerName: event.target.value }))
-              }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              onChange={(event) => {
+                setForm((current) => ({ ...current, playerName: event.target.value }));
+                if (playerNameError) setPlayerNameError(null);
+              }}
+              aria-invalid={playerNameError ? true : undefined}
+              aria-describedby={playerNameError ? "playerName-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. Oliver Smith"
             />
+            {playerNameError ? (
+              <p
+                id="playerName-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {playerNameError}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -421,7 +476,7 @@ export function PlayersManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, dateOfBirth: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             />
           </div>
 
@@ -438,7 +493,7 @@ export function PlayersManager() {
                   preferredFoot: event.target.value as PreferredFootOption,
                 }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             >
               {PREFERRED_FOOT_OPTIONS.map((option) => (
                 <option key={option} value={option}>
@@ -464,7 +519,7 @@ export function PlayersManager() {
                   ),
                 }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
             >
               <option value="">Not set</option>
               {PLAYER_POSITION_OPTIONS.map((position) => (
@@ -491,7 +546,7 @@ export function PlayersManager() {
                       "rounded-xl border px-3 py-2 text-sm font-medium transition-colors",
                       selected
                         ? "border-accent bg-accent/10 text-accent"
-                        : "border-border bg-background text-foreground hover:bg-black/[0.03] dark:hover:bg-white/[0.06]",
+                        : "border-border bg-background text-foreground hover:bg-surface-hover",
                     )}
                   >
                     {position}
@@ -514,7 +569,7 @@ export function PlayersManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, parentName: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="e.g. Sarah Smith"
             />
           </div>
@@ -527,12 +582,24 @@ export function PlayersManager() {
               id="parentEmail"
               type="email"
               value={form.parentEmail}
-              onChange={(event) =>
-                setForm((current) => ({ ...current, parentEmail: event.target.value }))
-              }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              onChange={(event) => {
+                setForm((current) => ({ ...current, parentEmail: event.target.value }));
+                if (parentEmailError) setParentEmailError(null);
+              }}
+              aria-invalid={parentEmailError ? true : undefined}
+              aria-describedby={parentEmailError ? "parentEmail-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="parent@example.com"
             />
+            {parentEmailError ? (
+              <p
+                id="parentEmail-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {parentEmailError}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -546,7 +613,7 @@ export function PlayersManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, parentPhone: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="+44 7123 456789"
             />
           </div>
@@ -561,15 +628,13 @@ export function PlayersManager() {
               onChange={(event) =>
                 setForm((current) => ({ ...current, notes: event.target.value }))
               }
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2"
               placeholder="Medical notes, development focus, personality notes, or match context..."
             />
           </div>
 
           {submitError ? (
-            <p className="sm:col-span-2 text-sm text-red-600 dark:text-red-400">
-              {submitError}
-            </p>
+            <FormErrorAlert message={submitError} className="sm:col-span-2" />
           ) : null}
 
           <div className="sm:col-span-2 flex flex-col gap-3 sm:flex-row">
@@ -589,14 +654,14 @@ export function PlayersManager() {
                   Save player
                 </>
               ) : (
-                "Add player"
+                "Create Player"
               )}
             </button>
             {editingPlayerId ? (
               <button
                 type="button"
                 onClick={resetForm}
-                className="border-border hover:bg-black/[0.03] inline-flex h-11 items-center justify-center rounded-full border px-6 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
+                className="border-border hover:bg-surface-hover inline-flex h-11 items-center justify-center rounded-full border px-6 text-sm font-medium transition-colors dark:hover:bg-white/[0.06]"
               >
                 Cancel
               </button>
@@ -613,51 +678,57 @@ export function PlayersManager() {
           ) : null}
         </div>
 
-        {error ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
-            {error}
-          </div>
-        ) : null}
+        {error ? <FormErrorAlert message={error} /> : null}
 
         {loadingPlayers ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading players...
-          </div>
+          <PanelSkeleton />
         ) : null}
 
         {!loadingPlayers && !error && !hasPlayers ? (
-          <div className="glass-panel rounded-2xl p-8 text-center">
-            <UserRound className="text-muted mx-auto size-8" aria-hidden />
-            <p className="mt-3 font-medium">No players yet</p>
-            <p className="text-muted mt-1 text-sm">
-              Add your first player to start building your CRM.
-            </p>
-          </div>
+          <EmptyState
+            {...footballEmptyPreset("players")}
+            actionLabel="Scroll up to add a player"
+            onAction={() => {
+              document.getElementById("playerName")?.focus();
+            }}
+          />
         ) : null}
 
         {!loadingPlayers && !error && hasPlayers ? (
           <div className="grid gap-4 md:grid-cols-2">
-            {sortedPlayers.map((player) => (
-              <article key={player.id} className="glass-panel rounded-2xl p-5 sm:p-6">
+            {sortedPlayers.map((player) => {
+              const isSelected = selectedPlayerId === player.id;
+              return (
+              <article
+                key={player.id}
+                className={cn(
+                  "football-panel football-panel-interactive rounded-2xl p-5 sm:p-6",
+                  isSelected && "ring-accent/40 ring-2 ring-offset-2",
+                )}
+              >
                 {(() => {
                   const playerTeams = getPlayerTeams(player.team_players);
                   return (
                     <>
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectPlayer(player.id)}
+                    className="focus-visible:ring-accent/40 min-w-0 flex-1 rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    aria-pressed={isSelected}
+                  >
                     <h3 className="text-lg font-semibold tracking-tight">
                       {player.player_name}
                     </h3>
                     <p className="text-muted mt-1 text-sm">
                       DOB: {formatDate(player.date_of_birth)}
                     </p>
-                  </div>
-                  <div className="flex items-center gap-1">
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={() => startEditing(player)}
-                      className="text-muted hover:text-foreground inline-flex items-center justify-center rounded-lg p-2 transition-colors"
+                      className="text-muted hover:text-foreground focus-visible:ring-accent/40 inline-flex items-center justify-center rounded-lg p-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                       aria-label={`Edit ${player.player_name}`}
                     >
                       <Pencil className="size-4" aria-hidden />
@@ -666,7 +737,7 @@ export function PlayersManager() {
                       type="button"
                       disabled={deletingId === player.id}
                       onClick={() => void handleDelete(player.id)}
-                      className="text-muted hover:text-red-500 inline-flex items-center justify-center rounded-lg p-2 transition-colors disabled:opacity-60"
+                      className="text-muted hover:text-red-500 focus-visible:ring-accent/40 inline-flex items-center justify-center rounded-lg p-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
                       aria-label={`Delete ${player.player_name}`}
                     >
                       {deletingId === player.id ? (
@@ -744,8 +815,13 @@ export function PlayersManager() {
                   );
                 })()}
               </article>
-            ))}
+            );
+            })}
           </div>
+        ) : null}
+
+        {selectedPlayer && coachId ? (
+          <PlayerDevelopmentPanel coachId={coachId} player={selectedPlayer} />
         ) : null}
       </section>
     </div>

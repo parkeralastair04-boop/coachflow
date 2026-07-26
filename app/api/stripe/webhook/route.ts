@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
-import { getStripeCurrentPeriodEnd } from "@/lib/parent-payments";
-import { createPublicSupabaseClient } from "@/lib/public-booking";
 import { getStripeServerClient } from "@/lib/stripe";
+import {
+  processStripeWebhookEvent,
+  StripeWebhookProcessingError,
+} from "@/lib/stripe-webhook";
+import { recordJobOutcome } from "@/lib/jobs/monitor";
+import { logger } from "@/lib/logger";
+import { captureException } from "@/lib/monitoring";
 
 export const runtime = "nodejs";
 
@@ -18,55 +23,103 @@ function getErrorMessage(error: unknown) {
 }
 
 export async function POST(request: Request) {
-  try {
-    const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    const signature = request.headers.get("stripe-signature");
+  const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const signature = request.headers.get("stripe-signature");
 
-    if (!stripeWebhookSecret || !signature) {
+  if (!stripeWebhookSecret || !signature) {
+    logger.warn("webhook", "Missing Stripe webhook configuration or signature");
+    return NextResponse.json(
+      { error: "Missing Stripe webhook configuration." },
+      { status: 400 },
+    );
+  }
+
+  let event;
+
+  try {
+    const stripe = getStripeServerClient();
+    const body = await request.text();
+    event = stripe.webhooks.constructEvent(body, signature, stripeWebhookSecret);
+  } catch (error: unknown) {
+    logger.warn("webhook", "Stripe signature verification failed", {
+      detail: getErrorMessage(error),
+    });
+    return NextResponse.json(
+      { error: getErrorMessage(error) },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const result = await processStripeWebhookEvent(event);
+
+    await recordJobOutcome({
+      job: "stripe_webhook",
+      outcome:
+        result.status === "duplicate"
+          ? "duplicate"
+          : result.status === "ignored"
+            ? "skipped"
+            : "success",
+      message: `Webhook ${result.status}: ${result.eventType}`,
+      metadata: {
+        eventId: result.eventId,
+        eventType: result.eventType,
+        detail: result.detail ?? null,
+      },
+    });
+
+    return NextResponse.json({
+      received: true,
+      eventId: result.eventId,
+      status: result.status,
+      detail: result.detail,
+    });
+  } catch (error: unknown) {
+    if (error instanceof StripeWebhookProcessingError) {
+      await recordJobOutcome({
+        job: "stripe_webhook",
+        outcome: "retryable",
+        message: error.message,
+        metadata: {
+          eventId: error.eventId,
+          eventType: error.eventType,
+        },
+        error,
+      });
       return NextResponse.json(
-        { error: "Missing Stripe webhook configuration." },
-        { status: 400 },
+        {
+          error: error.message,
+          eventId: error.eventId,
+          eventType: error.eventType,
+        },
+        { status: 500 },
       );
     }
 
-    const stripe = getStripeServerClient();
-    const body = await request.text();
-    const event = stripe.webhooks.constructEvent(body, signature, stripeWebhookSecret);
-    const supabase = createPublicSupabaseClient();
+    await recordJobOutcome({
+      job: "stripe_webhook",
+      outcome: "failed",
+      message: getErrorMessage(error),
+      metadata: {
+        eventId: event.id,
+        eventType: event.type,
+      },
+      error,
+    });
+    await captureException(error, {
+      route: "/api/stripe/webhook",
+      tags: { eventType: event.type },
+      extra: { eventId: event.id },
+    });
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      if (
-        session.mode === "subscription" &&
-        typeof session.subscription === "string" &&
-        typeof session.customer === "string" &&
-        session.metadata?.enrolment_id
-      ) {
-        const subscription = await stripe.subscriptions.retrieve(session.subscription);
-        await supabase.rpc("confirm_public_recurring_enrolment", {
-          p_enrolment_id: session.metadata.enrolment_id,
-          p_stripe_customer_id: session.customer,
-          p_stripe_subscription_id: subscription.id,
-          p_subscription_status: subscription.status,
-          p_current_period_end: getStripeCurrentPeriodEnd(subscription),
-        });
-      }
-    }
-
-    if (
-      event.type === "customer.subscription.updated" ||
-      event.type === "customer.subscription.deleted"
-    ) {
-      const subscription = event.data.object;
-      await supabase.rpc("sync_recurring_subscription_state", {
-        p_stripe_subscription_id: subscription.id,
-        p_status: subscription.status,
-        p_current_period_end: getStripeCurrentPeriodEnd(subscription),
-      });
-    }
-
-    return NextResponse.json({ received: true });
-  } catch (error: unknown) {
-    return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
+    return NextResponse.json(
+      {
+        error: getErrorMessage(error),
+        eventId: event.id,
+        eventType: event.type,
+      },
+      { status: 500 },
+    );
   }
 }

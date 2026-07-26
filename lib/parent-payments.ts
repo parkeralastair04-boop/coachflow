@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getStripeServerClient } from "@/lib/stripe";
+import { getAwarixUserIdFromCustomer } from "@/lib/stripe-customer-ownership";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasFeatureAccess } from "@/lib/subscription";
 
@@ -47,7 +48,7 @@ export async function requireParentPaymentsAccess(): Promise<PaymentAccessContex
     return {
       ok: false,
       response: NextResponse.json(
-        { error: "Parent payments are available on CoachFlow Academy." },
+        { error: "Parent payments are available on Awarix Academy." },
         { status: 403 },
       ),
     };
@@ -99,23 +100,56 @@ export async function ensureStripeCustomerForParent(player: ParentPlayerRow) {
   }
 
   const stripe = getStripeServerClient();
+  const normalizedEmail = parentEmail.toLowerCase();
+
+  // Prefer an existing subscription customer for this player (binding by payment row).
+  const supabase = await createServerSupabaseClient();
+  const { data: existingSub } = await supabase
+    .from("parent_subscriptions")
+    .select("stripe_customer_id")
+    .eq("player_id", player.id)
+    .not("stripe_customer_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existingSub?.stripe_customer_id) {
+    const existing = await stripe.customers.retrieve(
+      existingSub.stripe_customer_id as string,
+    );
+    if (!("deleted" in existing && existing.deleted)) {
+      return existing;
+    }
+  }
+
   const existingCustomers = await stripe.customers.list({
-    email: parentEmail,
-    limit: 1,
+    email: normalizedEmail,
+    limit: 10,
   });
 
-  const customer =
-    existingCustomers.data[0] ??
-    (await stripe.customers.create({
-      email: parentEmail,
-      name: player.parent_name?.trim() || undefined,
-      metadata: {
-        player_id: player.id,
-        player_name: player.player_name,
-      },
-    }));
+  // Avoid reclaiming Stripe customers already bound to an Awarix SaaS user.
+  const reusable = existingCustomers.data.find((customer) => {
+    const ownerId = getAwarixUserIdFromCustomer(customer);
+    if (ownerId) return false;
+    const metaPlayerId = customer.metadata?.player_id?.trim();
+    if (metaPlayerId && metaPlayerId !== player.id) return false;
+    return true;
+  });
 
-  return customer;
+  if (reusable) {
+    return reusable;
+  }
+
+  return stripe.customers.create({
+    email: normalizedEmail,
+    name: player.parent_name?.trim() || undefined,
+    metadata: {
+      player_id: player.id,
+      player_name: player.player_name,
+      parent_email: normalizedEmail,
+      customer_kind: "parent_payment",
+    },
+  });
 }
 
 export function getStripeSubscriptionStatus(subscription: unknown): string {

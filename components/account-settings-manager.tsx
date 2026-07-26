@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { ContentSkeleton } from "@/components/branded-loading";
+import { PageHeader } from "@/components/page-header";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { createClient } from "@/lib/supabase";
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
 import { readClientComplimentaryAccess } from "@/lib/complimentary-access-client";
-import type { ComplimentaryAccess } from "@/lib/complimentary-access";
+import type { ComplimentaryAccess } from "@/lib/complimentary-access-types";
+import { EMPTY_COMPLIMENTARY_ACCESS } from "@/lib/complimentary-access-types";
 import { getPlanDisplayName } from "@/lib/feature-info";
 import type { PlanId } from "@/lib/billing";
 import { cn } from "@/lib/utils";
@@ -16,13 +21,6 @@ type AccountProfile = {
   subscriptionStatus: string | null;
   complimentary: ComplimentaryAccess;
 };
-
-function parsePlanId(value: unknown): PlanId | null {
-  if (value === "starter" || value === "pro" || value === "academy") {
-    return value;
-  }
-  return null;
-}
 
 export function AccountSettingsManager() {
   const [loading, setLoading] = useState(true);
@@ -48,7 +46,53 @@ export function AccountSettingsManager() {
           return;
         }
 
-        const complimentary = await readClientComplimentaryAccess(supabase);
+        let complimentary: ComplimentaryAccess = EMPTY_COMPLIMENTARY_ACCESS;
+        let subscriptionPlan: PlanId | null = null;
+        let subscriptionStatus: string | null = null;
+
+        try {
+          const response = await fetch("/api/account/entitlements");
+          if (response.ok) {
+            const payload = (await response.json()) as {
+              plan?: PlanId;
+              status?: string;
+              hasComplimentaryAccess?: boolean;
+              isFounder?: boolean;
+              isBetaTester?: boolean;
+            };
+            if (payload.plan) subscriptionPlan = payload.plan;
+            if (payload.status) subscriptionStatus = payload.status;
+            if (payload.hasComplimentaryAccess) {
+              subscriptionPlan = "academy";
+              subscriptionStatus = "active";
+              complimentary = {
+                plan: "academy",
+                status: "active",
+                isFounder: Boolean(payload.isFounder),
+                isBetaTester: Boolean(payload.isBetaTester),
+                hasComplimentaryAccess: true,
+                accessType: payload.isFounder
+                  ? "founder"
+                  : payload.isBetaTester
+                    ? "beta_tester"
+                    : null,
+              };
+            }
+          } else {
+            // Optimistic beta-only hint when entitlements API is unavailable.
+            complimentary = await readClientComplimentaryAccess(supabase);
+            if (complimentary.hasComplimentaryAccess) {
+              subscriptionPlan = "academy";
+              subscriptionStatus = "active";
+            }
+          }
+        } catch {
+          complimentary = await readClientComplimentaryAccess(supabase);
+          if (complimentary.hasComplimentaryAccess) {
+            subscriptionPlan = "academy";
+            subscriptionStatus = "active";
+          }
+        }
 
         if (!cancelled) {
           setProfile({
@@ -57,18 +101,15 @@ export function AccountSettingsManager() {
               typeof user.user_metadata?.full_name === "string"
                 ? user.user_metadata.full_name
                 : null,
-            subscriptionPlan: parsePlanId(user.user_metadata?.subscription_plan),
-            subscriptionStatus:
-              typeof user.user_metadata?.subscription_status === "string"
-                ? user.user_metadata.subscription_status
-                : null,
+            subscriptionPlan,
+            subscriptionStatus,
             complimentary,
           });
           setError(null);
         }
-      } catch {
+      } catch (caughtError: unknown) {
         if (!cancelled) {
-          setError("Account settings could not be loaded.");
+          setError(sanitizeDashboardSaveError(caughtError, { logLabel: "account-settings" }));
           setProfile(null);
         }
       } finally {
@@ -82,21 +123,14 @@ export function AccountSettingsManager() {
   }, []);
 
   if (loading) {
-    return (
-      <div className="text-muted flex min-h-[40vh] items-center justify-center gap-2 text-sm">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Loading account settings...
-      </div>
-    );
+    return <ContentSkeleton rows={3} />;
   }
 
   if (error || !profile) {
     return (
       <div className="space-y-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Account Settings</h1>
-        </div>
-        <p className="text-sm text-red-600 dark:text-red-400">{error ?? "Account unavailable."}</p>
+        <PageHeader title="Coach Profile" />
+        <FormErrorAlert message={error ?? "Account settings could not be loaded."} />
       </div>
     );
   }
@@ -106,17 +140,15 @@ export function AccountSettingsManager() {
     : getPlanDisplayName(profile.subscriptionPlan ?? "starter");
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Account Settings</h1>
-        <p className="text-muted mt-1 text-sm">
-          View your sign-in details and CoachFlow plan access.
-        </p>
-      </div>
+    <div className="page-content-enter space-y-8">
+      <PageHeader
+        title="Coach Profile"
+        subtitle="Your sign-in details and Awarix plan."
+      />
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <UserRound className="text-accent size-5" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
@@ -128,7 +160,7 @@ export function AccountSettingsManager() {
                   <span className="text-foreground font-medium">{profile.fullName}</span>
                 </>
               ) : (
-                "Your CoachFlow account"
+                "Your Awarix account"
               )}
             </p>
           </div>
@@ -146,29 +178,24 @@ export function AccountSettingsManager() {
         </dl>
       </section>
 
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <ShieldCheck className="text-accent size-5" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-semibold tracking-tight">Access & billing</h2>
+            <h2 className="text-lg font-semibold tracking-tight">Plan & access</h2>
             <p className="text-muted mt-1 text-sm">
-              Your current CoachFlow subscription tier and any complimentary access.
+              Your current Awarix plan and any complimentary access.
             </p>
           </div>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          {profile.complimentary.isFounder ? (
-            <span className="bg-accent/12 text-accent ring-accent/25 inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ring-1">
-              Founder • Academy
-            </span>
-          ) : null}
-          {profile.complimentary.isBetaTester ? (
+          {profile.complimentary.hasComplimentaryAccess ? (
             <span className="bg-violet-500/12 text-violet-700 ring-violet-500/25 dark:text-violet-300 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1">
               <Sparkles className="size-3.5" aria-hidden />
-              Beta Tester
+              Awarix member
             </span>
           ) : null}
           {!profile.complimentary.hasComplimentaryAccess ? (
@@ -179,7 +206,7 @@ export function AccountSettingsManager() {
           ) : null}
         </div>
 
-        {profile.complimentary.isBetaTester ? (
+        {profile.complimentary.hasComplimentaryAccess ? (
           <div
             className={cn(
               "mt-6 rounded-xl border p-4",
@@ -187,18 +214,11 @@ export function AccountSettingsManager() {
             )}
           >
             <p className="text-sm font-medium text-violet-950 dark:text-violet-100">
-              Complimentary Academy Access
+              Complimentary Academy access
             </p>
             <p className="text-muted mt-1 text-sm leading-relaxed">
-              You are part of the CoachFlow beta programme with full Academy features enabled
-              for testing. Billing and Stripe checkout are not required for your account.
-            </p>
-          </div>
-        ) : profile.complimentary.isFounder ? (
-          <div className="bg-accent/8 border-accent/20 mt-6 rounded-xl border p-4">
-            <p className="text-accent text-sm font-medium">Complimentary Academy Access</p>
-            <p className="text-muted mt-1 text-sm leading-relaxed">
-              Founder accounts receive full Academy access without a paid subscription.
+              You have complimentary Academy access as an Awarix member. Paid billing is not
+              required for your account.
             </p>
           </div>
         ) : (

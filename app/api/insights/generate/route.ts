@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { isMissedAttendanceStatus, type PlayerAttendanceStatus } from "@/lib/attendance";
 import {
   isInsightPriority,
@@ -272,12 +273,19 @@ function extractJson(text: string): unknown {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.aiGenerate,
+      route: "/api/insights/generate",
+    });
+    if (limited) return limited;
+
     const allowed = await hasFeatureAccess("insights");
     if (!allowed) {
       return NextResponse.json(
-        { error: "AI business insights are available on CoachFlow Academy." },
+        { error: "AI business insights are available on Awarix Academy." },
         { status: 403 },
       );
     }
@@ -447,7 +455,7 @@ export async function POST() {
         {
           role: "system",
           content:
-            "You are a commercial operating partner for football academies. Return only valid JSON with an `insights` array. Each insight must include id, priority (High/Medium/Low), category, title, summary, recommendedAction. Be specific and practical.",
+            "You are the Awarix commercial intelligence partner for football academies. Return only valid JSON with an `insights` array. Each insight must include id, priority (High/Medium/Low), category, title, summary, recommendedAction. Be specific and practical.",
         },
         {
           role: "user",

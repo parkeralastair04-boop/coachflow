@@ -1,10 +1,11 @@
 import type { MetadataRoute } from "next";
+import { BRAND } from "@/lib/brand-identity";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "CoachFlow",
-    short_name: "CoachFlow",
-    description: "The AI-powered operating system for football coaches.",
+    name: BRAND.name,
+    short_name: BRAND.name,
+    description: BRAND.shortDescription,
     theme_color: "#10B981",
     background_color: "#0F172A",
     display: "standalone",

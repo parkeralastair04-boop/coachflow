@@ -30,8 +30,9 @@ export function OnboardingHost() {
       if (!shouldAutoShowOnboarding(user.user_metadata)) return;
 
       const counts = await fetchOnboardingCounts(supabase, user.id);
-      const hasExistingActivity = counts.hasPlayer || counts.hasTeam || counts.hasSession;
-      if (hasExistingActivity) return;
+      // Auto-open until the coach has a real parent booking (or pauses/completes the wizard).
+      // A published session alone must not skip the share-link step.
+      if (counts.hasBooking) return;
 
       setInitialStep(metadata.currentStep);
       setWizardOpen(true);
@@ -59,8 +60,8 @@ export function OnboardingHost() {
       })();
     }
 
-    window.addEventListener("coachflow:resume-onboarding", handleResume);
-    return () => window.removeEventListener("coachflow:resume-onboarding", handleResume);
+    window.addEventListener("awarix:resume-onboarding", handleResume);
+    return () => window.removeEventListener("awarix:resume-onboarding", handleResume);
   }, []);
 
   if (!ready) return null;
@@ -72,10 +73,10 @@ export function OnboardingHost() {
       onClose={() => setWizardOpen(false)}
       onComplete={() => {
         setWizardOpen(false);
-        window.dispatchEvent(new CustomEvent("coachflow:onboarding-updated"));
+        window.dispatchEvent(new CustomEvent("awarix:onboarding-updated"));
       }}
       onProgressChange={() => {
-        window.dispatchEvent(new CustomEvent("coachflow:onboarding-updated"));
+        window.dispatchEvent(new CustomEvent("awarix:onboarding-updated"));
       }}
     />
   );
@@ -83,7 +84,7 @@ export function OnboardingHost() {
 
 export function dispatchResumeOnboarding(step: OnboardingStepId = 1) {
   window.dispatchEvent(
-    new CustomEvent("coachflow:resume-onboarding", { detail: { step } }),
+    new CustomEvent("awarix:resume-onboarding", { detail: { step } }),
   );
 }
 
@@ -136,10 +137,10 @@ export function useOnboardingState() {
     function handleUpdate() {
       void refresh();
     }
-    window.addEventListener("coachflow:onboarding-updated", handleUpdate);
+    window.addEventListener("awarix:onboarding-updated", handleUpdate);
     return () => {
       cancelled = true;
-      window.removeEventListener("coachflow:onboarding-updated", handleUpdate);
+      window.removeEventListener("awarix:onboarding-updated", handleUpdate);
     };
   }, [refresh]);
 
@@ -154,9 +155,9 @@ export async function loadOnboardingProgressSnapshot() {
   if (!user) {
     return {
       progress: buildOnboardingProgress({
-        hasPlayer: false,
-        hasTeam: false,
+        hasAcademy: false,
         hasSession: false,
+        hasBookingPage: false,
         bookingLinkShared: false,
       }),
       metadata: parseOnboardingMetadata(null),
@@ -167,7 +168,9 @@ export async function loadOnboardingProgressSnapshot() {
   const counts = await fetchOnboardingCounts(supabase, user.id);
   return {
     progress: buildOnboardingProgress({
-      ...counts,
+      hasAcademy: counts.hasAcademy,
+      hasSession: counts.hasSession,
+      hasBookingPage: counts.hasBookingPage,
       bookingLinkShared: metadata.bookingLinkShared,
     }),
     metadata,

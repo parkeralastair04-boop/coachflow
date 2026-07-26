@@ -1,39 +1,49 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  CalendarRange,
-  Loader2,
-  MapPin,
-  PoundSterling,
-  Trash2,
-  Users,
-} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { CalendarRange, Loader2, Trash2 } from "lucide-react";
+import { CampHubPanel } from "@/components/camp-hub-panel";
+import { CampOverviewCard } from "@/components/camp-overview-card";
 import { FeaturePageHeader } from "@/components/feature-page-header";
 import { SetupRequiredPanel } from "@/components/setup-required-panel";
+import {
+  aggregateCampEnrolments,
+  buildCampActivityTimeline,
+  buildCampAttendanceConcerns,
+  buildCampAttendanceSummary,
+  buildCampAttendeeCards,
+  buildCampHubSummaryCopy,
+  buildCampIncomeSummary,
+  buildCampInsightLeaders,
+  buildCampLateArrivals,
+  buildCampMissingReportPlayers,
+  buildCampOverviewMetrics,
+  buildCampReportsByPlayer,
+  buildAttendanceByPlayer,
+  filterCampAttendanceRows,
+  getCampLinkedSessions,
+  getCampPlayerIds,
+  parseCampPrice,
+  sumPaidCampBookingIncome,
+  type CampAttendanceRow,
+  type CampBookingRow,
+  type CampEnrolmentRow,
+  type CampPlayerSource,
+  type CampReportRow,
+  type CampRow,
+  type CampSessionRow,
+  type CampWithStats,
+} from "@/lib/camp-insights";
 import { createClient } from "@/lib/supabase";
+import { MIN_CAPACITY } from "@/lib/validation/constants";
 import {
   getSetupRequiredMessage,
   isMissingTableError,
   resolveQueryError,
 } from "@/lib/supabase-errors";
-
-type CampRow = {
-  id: string;
-  coach_id: string;
-  name: string;
-  description: string | null;
-  start_date: string;
-  end_date: string;
-  start_time: string;
-  end_time: string;
-  age_group: string | null;
-  capacity: number;
-  price: number;
-  location: string | null;
-  notes: string | null;
-  created_at: string;
-};
+import { sanitizeDashboardSaveError } from "@/lib/user-facing-errors";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type CampFormState = {
   name: string;
@@ -63,6 +73,13 @@ const defaultForm: CampFormState = {
   notes: "",
 };
 
+type CampFieldErrors = {
+  name?: string;
+  startDate?: string;
+  endDate?: string;
+  capacity?: string;
+};
+
 function getErrorMessage(error: unknown): string {
   if (
     typeof error === "object" &&
@@ -75,121 +92,256 @@ function getErrorMessage(error: unknown): string {
   return "An unexpected error occurred.";
 }
 
-function formatDate(value: string): string {
-  const parsed = new Date(`${value}T12:00:00`);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(parsed);
-}
-
-function formatTime(value: string): string {
-  if (!value) return "—";
-  const parts = value.split(":");
-  if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
-  return value;
-}
-
-function formatPricePounds(value: number): string {
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-  }).format(value);
-}
-
 function parsePrice(input: string): number {
-  const n = Number.parseFloat(input.replace(/[£,\s]/g, ""));
-  return Number.isFinite(n) && n >= 0 ? n : 0;
-}
-
-type CampWithStats = CampRow & {
-  enrolled: number;
-  waitlist: number;
-  remaining: number;
-};
-
-function aggregateEnrolments(
-  camps: CampRow[],
-  rows: { camp_id: string; status: string }[] | null,
-): CampWithStats[] {
-  const byCamp = new Map<string, { enrolled: number; waitlist: number }>();
-  for (const c of camps) {
-    byCamp.set(c.id, { enrolled: 0, waitlist: 0 });
-  }
-  for (const r of rows ?? []) {
-    const cur = byCamp.get(r.camp_id);
-    if (!cur) continue;
-    if (r.status === "enrolled") cur.enrolled += 1;
-    else if (r.status === "waitlist") cur.waitlist += 1;
-  }
-  return camps.map((c) => {
-    const { enrolled, waitlist } = byCamp.get(c.id) ?? {
-      enrolled: 0,
-      waitlist: 0,
-    };
-    const remaining = Math.max(0, c.capacity - enrolled);
-    return { ...c, enrolled, waitlist, remaining };
-  });
+  return parseCampPrice(input);
 }
 
 export function CampsManager() {
+  const searchParams = useSearchParams();
+  const focusCampId = searchParams.get("camp")?.trim() ?? null;
+  const focusHandledRef = useRef<string | null>(null);
+
   const [form, setForm] = useState<CampFormState>(defaultForm);
   const [coachId, setCoachId] = useState<string | null>(null);
   const [camps, setCamps] = useState<CampWithStats[]>([]);
+  const [enrolments, setEnrolments] = useState<CampEnrolmentRow[]>([]);
+  const [sessions, setSessions] = useState<CampSessionRow[]>([]);
+  const [bookings, setBookings] = useState<CampBookingRow[]>([]);
+  const [attendanceRows, setAttendanceRows] = useState<CampAttendanceRow[]>([]);
+  const [reportRows, setReportRows] = useState<CampReportRow[]>([]);
+  const [players, setPlayers] = useState<CampPlayerSource[]>([]);
+  const [selectedCampId, setSelectedCampId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<CampFieldErrors>({});
   const [setupTables, setSetupTables] = useState<string[]>([]);
 
   const hasCamps = useMemo(() => camps.length > 0, [camps.length]);
+  const selectedCamp = useMemo(
+    () => camps.find((camp) => camp.id === selectedCampId) ?? null,
+    [camps, selectedCampId],
+  );
 
-  const loadCamps = useCallback(async (userId: string) => {
+  const attendanceByPlayer = useMemo(
+    () => buildAttendanceByPlayer(attendanceRows),
+    [attendanceRows],
+  );
+
+  const reportsByPlayer = useMemo(
+    () => buildCampReportsByPlayer(reportRows),
+    [reportRows],
+  );
+
+  const campHubById = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        overview: ReturnType<typeof buildCampOverviewMetrics>;
+        registerSessionId: string | null;
+      }
+    >();
+
+    for (const camp of camps) {
+      const linkedSessions = getCampLinkedSessions(camp, sessions);
+      const linkedSessionIds = new Set(linkedSessions.map((session) => session.id));
+      const paidIncome = sumPaidCampBookingIncome(bookings, linkedSessionIds);
+      const playerIds = getCampPlayerIds({ linkedSessions, bookings });
+      const filteredAttendance = filterCampAttendanceRows(
+        attendanceRows,
+        linkedSessionIds,
+        new Set(playerIds),
+      );
+      const attendanceSummary = buildCampAttendanceSummary({
+        linkedSessions,
+        attendanceRows: filteredAttendance,
+        playerIds,
+      });
+
+      map.set(camp.id, {
+        overview: buildCampOverviewMetrics(camp, paidIncome),
+        registerSessionId: attendanceSummary.primarySessionId,
+      });
+    }
+
+    return map;
+  }, [camps, sessions, bookings, attendanceRows]);
+
+  const currentCampHub = useMemo(() => {
+    if (!selectedCamp) return null;
+
+    const linkedSessions = getCampLinkedSessions(selectedCamp, sessions);
+    const linkedSessionIds = new Set(linkedSessions.map((session) => session.id));
+    const campEnrolments = enrolments.filter((row) => row.camp_id === selectedCamp.id);
+    const paidIncome = sumPaidCampBookingIncome(bookings, linkedSessionIds);
+    const playerIds = getCampPlayerIds({ linkedSessions, bookings });
+    const filteredAttendance = filterCampAttendanceRows(
+      attendanceRows,
+      linkedSessionIds,
+      new Set(playerIds),
+    );
+    const attendanceSummary = buildCampAttendanceSummary({
+      linkedSessions,
+      attendanceRows: filteredAttendance,
+      playerIds,
+    });
+    const attendeeCards = buildCampAttendeeCards({
+      playerIds,
+      players,
+      attendanceByPlayer,
+      reportsByPlayer,
+    });
+    const concerns = buildCampAttendanceConcerns({
+      cards: attendeeCards,
+      attendanceByPlayer,
+    });
+    const missingReports = buildCampMissingReportPlayers(attendeeCards);
+    const playerNameById = new Map(
+      attendeeCards.map((card) => [card.playerId, card.playerName]),
+    );
+
+    return {
+      summaryCopy: buildCampHubSummaryCopy({
+        camp: selectedCamp,
+        attendanceRate: attendanceSummary.averageRate,
+        attendeeCount: attendeeCards.length,
+        concernCount: concerns.length,
+        missingReportCount: missingReports.length,
+      }),
+      incomeSummary: buildCampIncomeSummary({
+        camp: selectedCamp,
+        paidBookingIncome: paidIncome,
+        averageAttendanceRate: attendanceSummary.averageRate,
+      }),
+      attendance: attendanceSummary,
+      attendeeCards,
+      leaders: buildCampInsightLeaders(attendeeCards),
+      missingReports,
+      concerns,
+      lateArrivals: buildCampLateArrivals({
+        cards: attendeeCards,
+        attendanceRows: filteredAttendance,
+        linkedSessionIds,
+      }),
+      timeline: buildCampActivityTimeline({
+        camp: selectedCamp,
+        enrolments: campEnrolments,
+        bookings,
+        linkedSessionIds,
+        attendanceRows: filteredAttendance,
+        reports: reportRows.filter((report) => playerIds.includes(report.player_id)),
+        playerNameById,
+      }),
+      linkedSessionCount: linkedSessions.length,
+    };
+  }, [
+    selectedCamp,
+    sessions,
+    enrolments,
+    bookings,
+    attendanceRows,
+    reportRows,
+    players,
+    attendanceByPlayer,
+    reportsByPlayer,
+  ]);
+
+  const loadCoachData = useCallback(async (userId: string, preferredCampId?: string | null) => {
     setLoading(true);
     setError(null);
     setSetupTables([]);
     try {
       const supabase = createClient();
-      const { data: campRows, error: campsError } = await supabase
-        .from("camps")
-        .select(
-          "id, coach_id, name, description, start_date, end_date, start_time, end_time, age_group, capacity, price, location, notes, created_at",
-        )
-        .eq("coach_id", userId)
-        .order("created_at", { ascending: false });
+      const [
+        { data: campRows, error: campsError },
+        { data: enrolRows, error: enError },
+        { data: sessionRows, error: sessionsError },
+        { data: bookingRows, error: bookingsError },
+        { data: attendanceData, error: attendanceError },
+        { data: reportData, error: reportsError },
+        { data: playerRows, error: playersError },
+      ] = await Promise.all([
+        supabase
+          .from("camps")
+          .select(
+            "id, coach_id, name, description, start_date, end_date, start_time, end_time, age_group, capacity, price, location, notes, created_at, website_visible",
+          )
+          .eq("coach_id", userId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("camp_enrolments")
+          .select("id, camp_id, status, created_at")
+          .eq("coach_id", userId),
+        supabase
+          .from("sessions")
+          .select("id, session_date, group_name, session_type, session_players(player_id)")
+          .eq("coach_id", userId),
+        supabase
+          .from("session_bookings")
+          .select(
+            "id, session_id, player_id, booking_status, payment_status, amount, created_at",
+          )
+          .eq("coach_id", userId),
+        supabase
+          .from("session_attendance")
+          .select("session_id, player_id, status, recorded_at")
+          .eq("coach_id", userId),
+        supabase
+          .from("progress_reports")
+          .select("id, player_id, created_at")
+          .eq("coach_id", userId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("players")
+          .select(
+            "id, player_name, primary_position, parent_email, team_players(team:teams(id, team_name, age_group, team_color))",
+          )
+          .eq("coach_id", userId),
+      ]);
 
       if (campsError) {
         if (isMissingTableError(campsError)) {
           setSetupTables(["camps", "camp_enrolments"]);
           return;
         }
-        const resolved = resolveQueryError(campsError, "camps");
-        setError(resolved.message);
+        setError(resolveQueryError(campsError, "camps").message);
         return;
       }
 
       const list = (campRows ?? []) as CampRow[];
-      if (list.length === 0) {
-        setCamps([]);
-        return;
-      }
+      const enrolmentList = (enrolRows ?? []) as CampEnrolmentRow[];
 
-      const ids = list.map((c) => c.id);
-      const { data: enrolRows, error: enError } = await supabase
-        .from("camp_enrolments")
-        .select("camp_id, status")
-        .in("camp_id", ids);
+      setEnrolments(enrolmentList);
+      setSessions((sessionRows ?? []) as CampSessionRow[]);
+      setBookings((bookingRows ?? []) as CampBookingRow[]);
+      setAttendanceRows((attendanceData ?? []) as CampAttendanceRow[]);
+      setReportRows((reportData ?? []) as CampReportRow[]);
+      setPlayers((playerRows ?? []) as CampPlayerSource[]);
 
-      if (enError) {
+      if (enError && !isMissingTableError(enError)) {
         setError(enError.message);
         return;
       }
 
-      setCamps(aggregateEnrolments(list, enrolRows as { camp_id: string; status: string }[]));
+      const aggregated = aggregateCampEnrolments(list, enrolmentList);
+      setCamps(aggregated);
+      setSelectedCampId((current) => {
+        const nextId = preferredCampId ?? current;
+        if (nextId && aggregated.some((camp) => camp.id === nextId)) return nextId;
+        return aggregated[0]?.id ?? null;
+      });
+
+      if (sessionsError || bookingsError || attendanceError || reportsError || playersError) {
+        const optionalError =
+          sessionsError?.message ??
+          bookingsError?.message ??
+          attendanceError?.message ??
+          reportsError?.message ??
+          playersError?.message;
+        if (optionalError) setError(optionalError);
+      }
     } catch (caughtError: unknown) {
       setError(getErrorMessage(caughtError));
     } finally {
@@ -220,7 +372,7 @@ export function CampsManager() {
           return;
         }
         setCoachId(user.id);
-        await loadCamps(user.id);
+        await loadCoachData(user.id);
       } catch (caughtError: unknown) {
         if (!cancelled) {
           setError(getErrorMessage(caughtError));
@@ -233,7 +385,22 @@ export function CampsManager() {
     return () => {
       cancelled = true;
     };
-  }, [loadCamps]);
+  }, [loadCoachData]);
+
+  useEffect(() => {
+    if (!focusCampId || loading || camps.length === 0) return;
+    if (focusHandledRef.current === focusCampId) return;
+    if (!camps.some((camp) => camp.id === focusCampId)) return;
+    focusHandledRef.current = focusCampId;
+    const frame = window.requestAnimationFrame(() => {
+      setSelectedCampId(focusCampId);
+      document.getElementById("camp-hub-panel")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusCampId, loading, camps]);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -244,21 +411,35 @@ export function CampsManager() {
 
     setSubmitError(null);
 
-    if (!form.startDate || !form.endDate) {
-      setSubmitError("Start and end dates are required.");
-      return;
+    const nextFieldErrors: CampFieldErrors = {};
+    if (!form.name.trim()) {
+      nextFieldErrors.name = "Camp name is required.";
     }
-    if (new Date(form.endDate) < new Date(form.startDate)) {
-      setSubmitError("End date must be on or after the start date.");
-      return;
+    if (!form.startDate) {
+      nextFieldErrors.startDate = "Start date is required.";
+    }
+    if (!form.endDate) {
+      nextFieldErrors.endDate = "End date is required.";
+    }
+    if (
+      form.startDate &&
+      form.endDate &&
+      new Date(form.endDate) < new Date(form.startDate)
+    ) {
+      nextFieldErrors.endDate = "End date must be on or after the start date.";
     }
 
     const capacity = Number.parseInt(form.capacity, 10);
-    if (!Number.isFinite(capacity) || capacity < 1) {
-      setSubmitError("Maximum capacity must be at least 1.");
+    if (!Number.isFinite(capacity) || capacity < MIN_CAPACITY) {
+      nextFieldErrors.capacity = `Maximum capacity must be at least ${MIN_CAPACITY}.`;
+    }
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
       return;
     }
 
+    setFieldErrors({});
     setSaving(true);
     try {
       const supabase = createClient();
@@ -275,13 +456,14 @@ export function CampsManager() {
         price: parsePrice(form.price),
         location: form.location.trim() || null,
         notes: form.notes.trim() || null,
+        website_visible: false,
       };
 
       const { data, error: insertError } = await supabase
         .from("camps")
         .insert(payload)
         .select(
-          "id, coach_id, name, description, start_date, end_date, start_time, end_time, age_group, capacity, price, location, notes, created_at",
+          "id, coach_id, name, description, start_date, end_date, start_time, end_time, age_group, capacity, price, location, notes, created_at, website_visible",
         )
         .single();
 
@@ -298,10 +480,13 @@ export function CampsManager() {
             enrolled: 0,
             waitlist: 0,
             remaining: row.capacity,
+            revenue: 0,
           },
           ...cur,
         ]);
+        setSelectedCampId(row.id);
         setForm(defaultForm);
+        setFieldErrors({});
       }
     } catch (caughtError: unknown) {
       setSubmitError(getErrorMessage(caughtError));
@@ -334,7 +519,12 @@ export function CampsManager() {
         return;
       }
 
-      setCamps((cur) => cur.filter((c) => c.id !== campId));
+      const remaining = camps.filter((camp) => camp.id !== campId);
+      setCamps(remaining);
+      setEnrolments((cur) => cur.filter((row) => row.camp_id !== campId));
+      if (selectedCampId === campId) {
+        setSelectedCampId(remaining[0]?.id ?? null);
+      }
     } catch (caughtError: unknown) {
       setSubmitError(getErrorMessage(caughtError));
     } finally {
@@ -343,22 +533,12 @@ export function CampsManager() {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="page-content-enter space-y-10">
       <FeaturePageHeader
         featureKey="camps"
-        title="Camps"
-        subtitle="Create holiday blocks, set capacity and pricing, and track enrolments and waitlists."
+        title="Holiday Camps"
+        subtitle="Run holiday clubs as academy events — bookings, attendance, income, and development reports."
       />
-
-      <section className="glass-panel rounded-2xl p-5 sm:p-6">
-        <p className="text-sm font-medium">Camp migration stays in phase 2.</p>
-        <p className="text-muted mt-2 text-sm leading-relaxed">
-          Camps continue to run on the current camp workflow while the new booking system
-          rolls out for 1-to-1 and Group Session bookings first. Once phase 1 is stable,
-          CoachFlow can decide whether camps should be generated from availability templates
-          or move into the same `session_bookings` model as a specialised product.
-        </p>
-      </section>
 
       {setupTables.length > 0 ? (
         <SetupRequiredPanel
@@ -369,9 +549,9 @@ export function CampsManager() {
 
       {setupTables.length === 0 ? (
       <>
-      <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
         <div className="flex items-start gap-3">
-          <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+          <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
             <CalendarRange className="text-accent size-5" aria-hidden />
           </div>
           <div>
@@ -391,10 +571,24 @@ export function CampsManager() {
               id="campName"
               required
               value={form.name}
-              onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              onChange={(e) => {
+                setForm((c) => ({ ...c, name: e.target.value }));
+                if (fieldErrors.name) setFieldErrors((c) => ({ ...c, name: undefined }));
+              }}
+              aria-invalid={fieldErrors.name ? true : undefined}
+              aria-describedby={fieldErrors.name ? "campName-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="e.g. Easter Skills Camp"
             />
+            {fieldErrors.name ? (
+              <p
+                id="campName-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.name}
+              </p>
+            ) : null}
           </div>
 
           <div className="sm:col-span-2">
@@ -405,7 +599,7 @@ export function CampsManager() {
               id="campDescription"
               value={form.description}
               onChange={(e) => setForm((c) => ({ ...c, description: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-20 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-20 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="What parents can expect, focus areas, kit list…"
             />
           </div>
@@ -419,9 +613,23 @@ export function CampsManager() {
               type="date"
               required
               value={form.startDate}
-              onChange={(e) => setForm((c) => ({ ...c, startDate: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              onChange={(e) => {
+                setForm((c) => ({ ...c, startDate: e.target.value }));
+                if (fieldErrors.startDate) setFieldErrors((c) => ({ ...c, startDate: undefined }));
+              }}
+              aria-invalid={fieldErrors.startDate ? true : undefined}
+              aria-describedby={fieldErrors.startDate ? "startDate-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
+            {fieldErrors.startDate ? (
+              <p
+                id="startDate-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.startDate}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -433,9 +641,23 @@ export function CampsManager() {
               type="date"
               required
               value={form.endDate}
-              onChange={(e) => setForm((c) => ({ ...c, endDate: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              onChange={(e) => {
+                setForm((c) => ({ ...c, endDate: e.target.value }));
+                if (fieldErrors.endDate) setFieldErrors((c) => ({ ...c, endDate: undefined }));
+              }}
+              aria-invalid={fieldErrors.endDate ? true : undefined}
+              aria-describedby={fieldErrors.endDate ? "endDate-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
+            {fieldErrors.endDate ? (
+              <p
+                id="endDate-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.endDate}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -448,7 +670,7 @@ export function CampsManager() {
               required
               value={form.startTime}
               onChange={(e) => setForm((c) => ({ ...c, startTime: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
           </div>
 
@@ -462,7 +684,7 @@ export function CampsManager() {
               required
               value={form.endTime}
               onChange={(e) => setForm((c) => ({ ...c, endTime: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
           </div>
 
@@ -474,7 +696,7 @@ export function CampsManager() {
               id="ageGroup"
               value={form.ageGroup}
               onChange={(e) => setForm((c) => ({ ...c, ageGroup: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="e.g. U10–U12"
             />
           </div>
@@ -486,12 +708,26 @@ export function CampsManager() {
             <input
               id="capacity"
               type="number"
-              min={1}
+              min={MIN_CAPACITY}
               required
               value={form.capacity}
-              onChange={(e) => setForm((c) => ({ ...c, capacity: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              onChange={(e) => {
+                setForm((c) => ({ ...c, capacity: e.target.value }));
+                if (fieldErrors.capacity) setFieldErrors((c) => ({ ...c, capacity: undefined }));
+              }}
+              aria-invalid={fieldErrors.capacity ? true : undefined}
+              aria-describedby={fieldErrors.capacity ? "capacity-error" : undefined}
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
             />
+            {fieldErrors.capacity ? (
+              <p
+                id="capacity-error"
+                role="alert"
+                className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+              >
+                {fieldErrors.capacity}
+              </p>
+            ) : null}
           </div>
 
           <div>
@@ -504,7 +740,7 @@ export function CampsManager() {
               inputMode="decimal"
               value={form.price}
               onChange={(e) => setForm((c) => ({ ...c, price: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="e.g. 120 or 120.00"
             />
           </div>
@@ -517,7 +753,7 @@ export function CampsManager() {
               id="location"
               value={form.location}
               onChange={(e) => setForm((c) => ({ ...c, location: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 h-11 w-full rounded-xl border px-3 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="e.g. Main pitch, Sports Centre"
             />
           </div>
@@ -530,13 +766,18 @@ export function CampsManager() {
               id="campNotes"
               value={form.notes}
               onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))}
-              className="border-border bg-background text-foreground focus:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus:ring-2 dark:ring-offset-background"
+              className="border-border bg-background text-foreground focus-visible:ring-accent/40 min-h-24 w-full rounded-xl border px-3 py-2 text-sm outline-none ring-offset-2 focus-visible:ring-2 dark:ring-offset-background"
               placeholder="Staff briefing, safeguarding, equipment…"
             />
           </div>
 
           {submitError ? (
-            <p className="sm:col-span-2 text-sm text-red-600 dark:text-red-400">{submitError}</p>
+            <p
+              className="sm:col-span-2 break-words text-sm text-red-600 dark:text-red-400"
+              role="alert"
+            >
+              {submitError}
+            </p>
           ) : null}
 
           <div className="sm:col-span-2">
@@ -558,35 +799,33 @@ export function CampsManager() {
         </form>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-6" aria-labelledby="camps-overview-heading">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold tracking-tight">Your camps</h2>
+          <h2 id="camps-overview-heading" className="text-lg font-semibold tracking-tight">
+            Your camps
+          </h2>
           {!loading && hasCamps ? (
             <span className="text-muted text-sm">{camps.length} total</span>
           ) : null}
         </div>
 
         {error ? (
-          <div className="glass-panel rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
+          <div className="football-panel football-panel-interactive rounded-2xl p-6 text-sm text-red-600 dark:text-red-400">
             {error}
           </div>
         ) : null}
 
         {loading ? (
-          <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Loading camps…
-          </div>
+          <PanelSkeleton />
         ) : null}
 
         {!loading && !error && !hasCamps ? (
-          <div className="glass-panel rounded-2xl p-10 text-center">
+          <div className="football-panel football-panel-interactive rounded-2xl p-10 text-center">
             <CalendarRange className="text-muted mx-auto size-10" aria-hidden />
-            <p className="mt-4 font-medium">No camps yet</p>
-            <p className="text-muted mt-1 text-sm">
-              Run the Supabase migration for <code className="text-foreground">camps</code> and{" "}
-              <code className="text-foreground">camp_enrolments</code>, then create your first block
-              above.
+            <p className="mt-4 font-medium">Create your first camp or holiday club.</p>
+            <p className="text-muted mx-auto mt-2 max-w-md text-sm leading-relaxed">
+              Use the form above to set dates, capacity, and pricing. Once published, share your
+              booking page with parents to fill spaces.
             </p>
           </div>
         ) : null}
@@ -594,110 +833,93 @@ export function CampsManager() {
         {!loading && !error && hasCamps ? (
           <div className="grid gap-4 lg:grid-cols-2">
             {camps.map((camp) => {
-              const priceNum =
-                typeof camp.price === "number" ? camp.price : Number.parseFloat(String(camp.price));
+              const hubData = campHubById.get(camp.id);
+              if (!hubData) return null;
               return (
-                <article
-                  key={camp.id}
-                  className="glass-panel relative overflow-hidden rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-7"
-                >
-                  <div className="from-accent/6 pointer-events-none absolute inset-0 bg-gradient-to-br via-transparent to-transparent" />
-                  <div className="relative flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-lg font-semibold tracking-tight">{camp.name}</h3>
-                      {camp.age_group ? (
-                        <p className="text-muted mt-1 text-xs font-medium uppercase tracking-wide">
-                          {camp.age_group}
-                        </p>
-                      ) : null}
-                    </div>
+                <div key={camp.id} className="relative">
+                  <CampOverviewCard
+                    camp={camp}
+                    metrics={hubData.overview}
+                    registerSessionId={hubData.registerSessionId}
+                    selected={selectedCampId === camp.id}
+                    onSelect={() => setSelectedCampId(camp.id)}
+                  />
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
+                    <label className="text-muted inline-flex min-h-11 items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(camp.website_visible)}
+                        onChange={(event) => {
+                          void (async () => {
+                            const next = event.target.checked;
+                            const supabase = createClient();
+                            const { error: updateError } = await supabase
+                              .from("camps")
+                              .update({ website_visible: next })
+                              .eq("id", camp.id)
+                              .eq("coach_id", coachId);
+                            if (updateError) {
+                              setError(
+                                sanitizeDashboardSaveError(updateError, {
+                                  logLabel: "camps-website-visible",
+                                }),
+                              );
+                              return;
+                            }
+                            setCamps((current) =>
+                              current.map((item) =>
+                                item.id === camp.id
+                                  ? { ...item, website_visible: next }
+                                  : item,
+                              ),
+                            );
+                          })();
+                        }}
+                        className="accent-[var(--accent)] size-4 rounded"
+                      />
+                      Show on website
+                    </label>
                     <button
                       type="button"
                       disabled={deletingId === camp.id}
                       onClick={() => void handleDelete(camp.id)}
-                      className="text-muted hover:text-red-500 inline-flex shrink-0 items-center justify-center rounded-xl p-2 transition-colors disabled:opacity-60"
-                      aria-label={`Delete ${camp.name}`}
+                      className="text-muted hover:text-red-500 focus-visible:ring-accent/40 inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-60"
                     >
                       {deletingId === camp.id ? (
                         <Loader2 className="size-4 animate-spin" aria-hidden />
                       ) : (
-                        <Trash2 className="size-4" aria-hidden />
+                        <>
+                          <Trash2 className="size-4" aria-hidden />
+                          Delete
+                        </>
                       )}
                     </button>
                   </div>
-
-                  <p className="text-muted relative mt-3 text-sm leading-relaxed">
-                    {camp.description ?? "No description"}
-                  </p>
-
-                  <dl className="relative mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
-                    <div className="rounded-xl bg-black/[0.03] px-3 py-2.5 dark:bg-white/[0.04]">
-                      <dt className="text-muted text-xs font-medium">Dates</dt>
-                      <dd className="mt-0.5 font-medium">
-                        {formatDate(camp.start_date)} – {formatDate(camp.end_date)}
-                      </dd>
-                    </div>
-                    <div className="rounded-xl bg-black/[0.03] px-3 py-2.5 dark:bg-white/[0.04]">
-                      <dt className="text-muted text-xs font-medium">Daily hours</dt>
-                      <dd className="mt-0.5 font-medium">
-                        {formatTime(camp.start_time)} – {formatTime(camp.end_time)}
-                      </dd>
-                    </div>
-                    <div className="col-span-2 rounded-xl bg-black/[0.03] px-3 py-2.5 sm:col-span-1 dark:bg-white/[0.04]">
-                      <dt className="text-muted flex items-center gap-1 text-xs font-medium">
-                        <PoundSterling className="size-3" aria-hidden />
-                        Price
-                      </dt>
-                      <dd className="mt-0.5 font-medium">
-                        {Number.isFinite(priceNum) ? formatPricePounds(priceNum) : "—"}
-                      </dd>
-                    </div>
-                    {camp.location ? (
-                      <div className="col-span-2 rounded-xl bg-black/[0.03] px-3 py-2.5 sm:col-span-3 dark:bg-white/[0.04]">
-                        <dt className="text-muted flex items-center gap-1 text-xs font-medium">
-                          <MapPin className="size-3" aria-hidden />
-                          Location
-                        </dt>
-                        <dd className="mt-0.5">{camp.location}</dd>
-                      </div>
-                    ) : null}
-                  </dl>
-
-                  <div className="relative mt-5 grid grid-cols-3 gap-2">
-                    <div className="rounded-xl border border-black/[0.06] px-3 py-3 text-center dark:border-white/[0.08]">
-                      <Users className="text-accent mx-auto size-4" aria-hidden />
-                      <p className="text-muted mt-1 text-[10px] font-medium uppercase tracking-wide">
-                        Enrolled
-                      </p>
-                      <p className="mt-0.5 text-lg font-semibold tabular-nums">{camp.enrolled}</p>
-                    </div>
-                    <div className="rounded-xl border border-black/[0.06] px-3 py-3 text-center dark:border-white/[0.08]">
-                      <p className="text-muted text-[10px] font-medium uppercase tracking-wide">
-                        Remaining
-                      </p>
-                      <p className="mt-2 text-lg font-semibold tabular-nums text-accent">
-                        {camp.remaining}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-black/[0.06] px-3 py-3 text-center dark:border-white/[0.08]">
-                      <p className="text-muted text-[10px] font-medium uppercase tracking-wide">
-                        Waitlist
-                      </p>
-                      <p className="mt-2 text-lg font-semibold tabular-nums">{camp.waitlist}</p>
-                    </div>
-                  </div>
-
-                  {camp.notes ? (
-                    <p className="text-muted relative mt-4 rounded-xl bg-black/[0.02] p-3 text-xs leading-relaxed dark:bg-white/[0.03]">
-                      {camp.notes}
-                    </p>
-                  ) : null}
-                </article>
+                </div>
               );
             })}
           </div>
         ) : null}
       </section>
+
+      {selectedCamp && currentCampHub ? (
+        <div id="camp-hub-panel" className="space-y-6">
+          <CampHubPanel
+            camp={selectedCamp}
+            summaryCopy={currentCampHub.summaryCopy}
+            incomeSummary={currentCampHub.incomeSummary}
+            attendance={currentCampHub.attendance}
+            attendeeCards={currentCampHub.attendeeCards}
+            leaders={currentCampHub.leaders}
+            missingReports={currentCampHub.missingReports}
+            concerns={currentCampHub.concerns}
+            lateArrivals={currentCampHub.lateArrivals}
+            timeline={currentCampHub.timeline}
+            linkedSessionCount={currentCampHub.linkedSessionCount}
+            loading={loading}
+          />
+        </div>
+      ) : null}
       </>
       ) : null}
     </div>

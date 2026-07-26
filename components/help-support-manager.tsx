@@ -30,19 +30,22 @@ import {
   type UserGuideArticle,
 } from "@/lib/help-support";
 import { dispatchResumeOnboarding } from "@/components/onboarding-host";
-import { FeatureInfoTooltip } from "@/components/feature-info-tooltip";
+import { FeaturePageHeader } from "@/components/feature-page-header";
+import { buttonVariants } from "@/components/ui/button";
+import { FormErrorAlert } from "@/components/form-error-alert";
 import { cn } from "@/lib/utils";
+import {
+  sanitizeDashboardSaveError,
+  SUPPORT_UNAVAILABLE_DETAIL,
+  SUPPORT_UNAVAILABLE_MESSAGE,
+} from "@/lib/user-facing-errors";
 
 function getErrorMessage(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "message" in error &&
-    typeof error.message === "string"
-  ) {
-    return error.message;
-  }
-  return "Something went wrong. Please try again.";
+  return sanitizeDashboardSaveError(error, { logLabel: "help-support" });
+}
+
+function getSupportUnavailableError(): string {
+  return `${SUPPORT_UNAVAILABLE_MESSAGE} ${SUPPORT_UNAVAILABLE_DETAIL}`;
 }
 
 function SectionCard({
@@ -57,9 +60,9 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="glass-panel rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
+    <section className="football-panel football-panel-interactive rounded-2xl p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset] sm:p-8">
       <div className="flex items-start gap-3">
-        <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+        <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
           <Icon className="text-accent size-5" aria-hidden />
         </div>
         <div className="min-w-0 flex-1">
@@ -130,10 +133,31 @@ function BugReportForm() {
   const [priority, setPriority] = useState<BugPriority>("medium");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    title?: string;
+    description?: string;
+    priority?: string;
+  }>({});
   const [success, setSuccess] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const nextFieldErrors: {
+      title?: string;
+      description?: string;
+      priority?: string;
+    } = {};
+    if (!title.trim()) nextFieldErrors.title = "Title is required.";
+    if (!description.trim()) nextFieldErrors.description = "Description is required.";
+    if (!priority) nextFieldErrors.priority = "Priority is required.";
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      return;
+    }
+
+    setFieldErrors({});
     setLoading(true);
     setError(null);
     setSuccess(false);
@@ -153,8 +177,8 @@ function BugReportForm() {
       if (!response.ok) {
         setError(
           payload.setupRequired
-            ? (payload.message ?? "Support tables are not set up yet.")
-            : (payload.error ?? "Could not submit bug report."),
+            ? getSupportUnavailableError()
+            : sanitizeDashboardSaveError(payload.error, { logLabel: "bug-report" }),
         );
         return;
       }
@@ -173,34 +197,71 @@ function BugReportForm() {
 
   return (
     <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Title</span>
+      <div>
+        <label className="mb-2 block text-sm font-medium" htmlFor="bug-title">
+          Title <span className="text-red-500">*</span>
+        </label>
         <input
+          id="bug-title"
           type="text"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            setTitle(event.target.value);
+            if (fieldErrors.title) setFieldErrors((c) => ({ ...c, title: undefined }));
+          }}
           placeholder="Brief summary of the issue"
           required
+          aria-invalid={fieldErrors.title ? true : undefined}
+          aria-describedby={fieldErrors.title ? "bug-title-error" : undefined}
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
         />
-      </label>
+        {fieldErrors.title ? (
+          <p
+            id="bug-title-error"
+            role="alert"
+            className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+          >
+            {fieldErrors.title}
+          </p>
+        ) : null}
+      </div>
 
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Description</span>
+      <div>
+        <label className="mb-2 block text-sm font-medium" htmlFor="bug-description">
+          Description <span className="text-red-500">*</span>
+        </label>
         <textarea
+          id="bug-description"
           value={description}
-          onChange={(event) => setDescription(event.target.value)}
+          onChange={(event) => {
+            setDescription(event.target.value);
+            if (fieldErrors.description) setFieldErrors((c) => ({ ...c, description: undefined }));
+          }}
           placeholder="What happened? Include steps to reproduce if possible."
           required
           rows={4}
+          aria-invalid={fieldErrors.description ? true : undefined}
+          aria-describedby={fieldErrors.description ? "bug-description-error" : undefined}
           className="border-border bg-background w-full resize-y rounded-xl border px-3 py-2.5 text-sm"
         />
-      </label>
+        {fieldErrors.description ? (
+          <p
+            id="bug-description-error"
+            role="alert"
+            className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+          >
+            {fieldErrors.description}
+          </p>
+        ) : null}
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <label className="block space-y-2">
-          <span className="text-sm font-medium">Page / feature</span>
+        <div>
+          <label className="mb-2 block text-sm font-medium" htmlFor="bug-page-feature">
+            Page / feature
+          </label>
           <select
+            id="bug-page-feature"
             value={pageFeature}
             onChange={(event) => setPageFeature(event.target.value as BugPageFeature)}
             className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
@@ -211,13 +272,22 @@ function BugReportForm() {
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
-        <label className="block space-y-2">
-          <span className="text-sm font-medium">Priority</span>
+        <div>
+          <label className="mb-2 block text-sm font-medium" htmlFor="bug-priority">
+            Priority <span className="text-red-500">*</span>
+          </label>
           <select
+            id="bug-priority"
             value={priority}
-            onChange={(event) => setPriority(event.target.value as BugPriority)}
+            onChange={(event) => {
+              setPriority(event.target.value as BugPriority);
+              if (fieldErrors.priority) setFieldErrors((c) => ({ ...c, priority: undefined }));
+            }}
+            required
+            aria-invalid={fieldErrors.priority ? true : undefined}
+            aria-describedby={fieldErrors.priority ? "bug-priority-error" : undefined}
             className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
           >
             {BUG_PRIORITIES.map((value) => (
@@ -226,12 +296,21 @@ function BugReportForm() {
               </option>
             ))}
           </select>
-        </label>
+          {fieldErrors.priority ? (
+            <p
+              id="bug-priority-error"
+              role="alert"
+              className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+            >
+              {fieldErrors.priority}
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {error ? <FormErrorAlert message={error} /> : null}
       {success ? (
-        <p className="text-accent text-sm font-medium">
+        <p className="text-accent text-sm font-medium" role="status">
           Thank you — your bug report has been submitted. We will review it shortly.
         </p>
       ) : null}
@@ -263,10 +342,31 @@ function FeatureRequestForm() {
   const [benefit, setBenefit] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    featureName?: string;
+    description?: string;
+    benefit?: string;
+  }>({});
   const [success, setSuccess] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    const nextFieldErrors: {
+      featureName?: string;
+      description?: string;
+      benefit?: string;
+    } = {};
+    if (!featureName.trim()) nextFieldErrors.featureName = "Feature name is required.";
+    if (!description.trim()) nextFieldErrors.description = "Description is required.";
+    if (!benefit.trim()) nextFieldErrors.benefit = "Benefit is required.";
+
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors);
+      return;
+    }
+
+    setFieldErrors({});
     setLoading(true);
     setError(null);
     setSuccess(false);
@@ -286,8 +386,8 @@ function FeatureRequestForm() {
       if (!response.ok) {
         setError(
           payload.setupRequired
-            ? (payload.message ?? "Support tables are not set up yet.")
-            : (payload.error ?? "Could not submit feature request."),
+            ? getSupportUnavailableError()
+            : sanitizeDashboardSaveError(payload.error, { logLabel: "feature-request" }),
         );
         return;
       }
@@ -305,45 +405,96 @@ function FeatureRequestForm() {
 
   return (
     <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Feature name</span>
+      <div>
+        <label className="mb-2 block text-sm font-medium" htmlFor="feature-name">
+          Feature name <span className="text-red-500">*</span>
+        </label>
         <input
+          id="feature-name"
           type="text"
           value={featureName}
-          onChange={(event) => setFeatureName(event.target.value)}
+          onChange={(event) => {
+            setFeatureName(event.target.value);
+            if (fieldErrors.featureName) setFieldErrors((c) => ({ ...c, featureName: undefined }));
+          }}
           placeholder="e.g. Bulk SMS reminders"
           required
+          aria-invalid={fieldErrors.featureName ? true : undefined}
+          aria-describedby={fieldErrors.featureName ? "feature-name-error" : undefined}
           className="border-border bg-background h-11 w-full rounded-xl border px-3 text-sm"
         />
-      </label>
+        {fieldErrors.featureName ? (
+          <p
+            id="feature-name-error"
+            role="alert"
+            className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+          >
+            {fieldErrors.featureName}
+          </p>
+        ) : null}
+      </div>
 
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Description</span>
+      <div>
+        <label className="mb-2 block text-sm font-medium" htmlFor="feature-description">
+          Description <span className="text-red-500">*</span>
+        </label>
         <textarea
+          id="feature-description"
           value={description}
-          onChange={(event) => setDescription(event.target.value)}
+          onChange={(event) => {
+            setDescription(event.target.value);
+            if (fieldErrors.description) setFieldErrors((c) => ({ ...c, description: undefined }));
+          }}
           placeholder="Describe the feature and how it would work."
           required
           rows={4}
+          aria-invalid={fieldErrors.description ? true : undefined}
+          aria-describedby={fieldErrors.description ? "feature-description-error" : undefined}
           className="border-border bg-background w-full resize-y rounded-xl border px-3 py-2.5 text-sm"
         />
-      </label>
+        {fieldErrors.description ? (
+          <p
+            id="feature-description-error"
+            role="alert"
+            className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+          >
+            {fieldErrors.description}
+          </p>
+        ) : null}
+      </div>
 
-      <label className="block space-y-2">
-        <span className="text-sm font-medium">Benefit</span>
+      <div>
+        <label className="mb-2 block text-sm font-medium" htmlFor="feature-benefit">
+          Benefit <span className="text-red-500">*</span>
+        </label>
         <textarea
+          id="feature-benefit"
           value={benefit}
-          onChange={(event) => setBenefit(event.target.value)}
+          onChange={(event) => {
+            setBenefit(event.target.value);
+            if (fieldErrors.benefit) setFieldErrors((c) => ({ ...c, benefit: undefined }));
+          }}
           placeholder="How would this help your coaching business or parents?"
           required
           rows={3}
+          aria-invalid={fieldErrors.benefit ? true : undefined}
+          aria-describedby={fieldErrors.benefit ? "feature-benefit-error" : undefined}
           className="border-border bg-background w-full resize-y rounded-xl border px-3 py-2.5 text-sm"
         />
-      </label>
+        {fieldErrors.benefit ? (
+          <p
+            id="feature-benefit-error"
+            role="alert"
+            className="mt-2 break-words text-sm text-red-600 dark:text-red-400"
+          >
+            {fieldErrors.benefit}
+          </p>
+        ) : null}
+      </div>
 
-      {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {error ? <FormErrorAlert message={error} /> : null}
       {success ? (
-        <p className="text-accent text-sm font-medium">
+        <p className="text-accent text-sm font-medium" role="status">
           Thank you — your feature request has been submitted for review.
         </p>
       ) : null}
@@ -371,29 +522,24 @@ function FeatureRequestForm() {
 
 export function HelpSupportManager() {
   return (
-    <div className="space-y-10">
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Help & Support
-          </h1>
-          <FeatureInfoTooltip featureKey="help-support" />
-        </div>
-        <p className="text-muted mt-1 max-w-2xl text-sm">
-          Guides, answers, and direct contact with the CoachFlow team.
-        </p>
-      </div>
+    <div className="page-content-enter space-y-10">
+      <FeaturePageHeader
+        featureKey="help-support"
+        title="Help & Support"
+        subtitle="Guides, answers, and direct contact with the Awarix team."
+        subtitleClassName="max-w-2xl"
+      />
 
       <SectionCard
-        title="Getting Started"
-        description="New to CoachFlow? Start here."
+        title="Match-Ready"
+        description="New to Awarix? Start here."
         icon={Rocket}
       >
         <div className="space-y-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <Link
               href="/dashboard#getting-started"
-              className="bg-accent hover:opacity-90 inline-flex h-11 items-center justify-center rounded-full px-6 text-sm font-medium text-white transition-opacity"
+              className={buttonVariants({ variant: "accent" })}
             >
               View onboarding checklist
               <ArrowRight className="ml-2 size-4" aria-hidden />
@@ -428,7 +574,7 @@ export function HelpSupportManager() {
 
       <SectionCard
         title="User Guide"
-        description="Step-by-step help for every major CoachFlow feature."
+        description="Step-by-step help for every major Awarix feature."
         icon={BookOpen}
       >
         <div className="space-y-3">

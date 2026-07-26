@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
 import { getStripeServerClient } from "@/lib/stripe";
 import {
@@ -7,6 +8,8 @@ import {
   type ParentPlayerRow,
   requireParentPaymentsAccess,
 } from "@/lib/parent-payments";
+import { isValidSubscriptionAmount } from "@/lib/validation/amounts";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type BillingInterval = "monthly" | "weekly";
 
@@ -48,7 +51,7 @@ function emailHtml(args: {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:24px;overflow:hidden;border:1px solid #e5e7eb;">
             <tr>
               <td style="padding:28px 32px;background:#0f172a;color:#ffffff;">
-                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">CoachFlow</div>
+                <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;">Awarix</div>
                 <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">Payment setup for ${args.playerName}</h1>
               </td>
             </tr>
@@ -65,7 +68,7 @@ function emailHtml(args: {
                   If the button does not work, copy and paste this link into your browser:<br />
                   <a href="${args.checkoutUrl}" style="color:#047857;">${args.checkoutUrl}</a>
                 </p>
-                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">The CoachFlow Team</p>
+                <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">The Awarix Team</p>
               </td>
             </tr>
           </table>
@@ -78,6 +81,16 @@ function emailHtml(args: {
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.paymentsWrite,
+      route: "/api/payments/create-checkout-link",
+    });
+    if (limited) return limited;
+
+    const demoBlocked = rejectDemoMutation(request, "create a parent checkout link");
+    if (demoBlocked) return demoBlocked;
+
     const access = await requireParentPaymentsAccess();
     if (!access.ok) return access.response;
 
@@ -98,7 +111,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!Number.isFinite(amount) || amount < 100) {
+    if (!isValidSubscriptionAmount(amount)) {
       return NextResponse.json(
         { error: "amount must be at least 100 pence." },
         { status: 400 },
@@ -135,7 +148,7 @@ export async function POST(request: Request) {
           price_data: {
             currency: "gbp",
             product_data: {
-              name: `CoachFlow coaching subscription - ${safePlayer.player_name}`,
+              name: `Awarix coaching subscription - ${safePlayer.player_name}`,
             },
             recurring: {
               interval: intervalToStripeInterval[interval],
@@ -196,7 +209,7 @@ Please use this secure Stripe checkout link to set up ${formatMoney(amount)} ${i
 
 ${session.url}
 
-The CoachFlow Team`,
+The Awarix Team`,
       });
 
       if (error) {

@@ -1,5 +1,5 @@
 {
-  "name": "coachflow",
+  "name": "awarix",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -7,6 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "check:bundle-secrets": "bash scripts/check-bundle-secrets.sh",
+    "build:secure": "npm run build && npm run check:bundle-secrets",
+    "health:check": "curl -sS http://localhost:3000/api/health | head -c 2000",
+    "capture:marketing-screenshots": "npx --yes tsx scripts/capture-marketing-screenshots.ts",
+    "smoke:webhook-rc": "npx --yes tsx scripts/smoke-stripe-webhook-rc.ts",
+    "smoke:webhook-confirm": "npx --yes tsx scripts/smoke-m402-webhook-confirm.ts",
+    "verify:wave1": "npx --yes tsx scripts/wave1-verify.ts",
+    "sql:wave1": "npx --yes tsx scripts/wave1-sql-proof.ts",
+    "apply:wave1-migrations": "npx --yes tsx scripts/wave1-apply-migrations.ts",
     "validate:gating": "npx --yes tsx scripts/validate-feature-gating.ts",
     "cap:sync": "cap sync",
     "cap:ios": "cap open ios",
@@ -20,6 +29,7 @@
     "@capacitor/core": "^8.3.4",
     "@capacitor/ios": "^8.3.4",
     "@capacitor/push-notifications": "^8.1.1",
+    "@sentry/nextjs": "^10.66.0",
     "@supabase/ssr": "^0.10.3",
     "@supabase/supabase-js": "^2.105.4",
     "lucide-react": "^1.14.0",
@@ -30,15 +40,19 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.12.3",
+    "server-only": "^0.0.1",
     "stripe": "^22.1.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
+    "pg": "^8.21.0",
+    "playwright": "^1.61.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

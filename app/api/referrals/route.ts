@@ -38,7 +38,7 @@ export async function GET() {
     if (!allowed) {
       return NextResponse.json(
         {
-          error: "Referrals require a higher CoachFlow plan.",
+          error: "Referrals require a higher Awarix plan.",
           requiredPlan: getMinimumPlanForGateFeature("referrals"),
         },
         { status: 403 },

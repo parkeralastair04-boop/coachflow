@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { AccountSettingsManager } from "@/components/account-settings-manager";
 
 export const metadata: Metadata = {
-  title: "Account Settings",
+  title: "Profile",
 };
 
 export default function AccountSettingsPage() {

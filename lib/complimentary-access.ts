@@ -1,26 +1,25 @@
-import type { PlanId } from "@/lib/billing";
+import "server-only";
+
 import { isBetaTester } from "@/lib/beta-testers";
 import { isFounder } from "@/lib/founders";
+import type { ComplimentaryAccess } from "@/lib/complimentary-access-types";
 
-export type ComplimentaryAccessType = "founder" | "beta_tester";
+export type {
+  ComplimentaryAccess,
+  ComplimentaryAccessType,
+} from "@/lib/complimentary-access-types";
 
-export type ComplimentaryAccess = {
-  plan: PlanId;
-  status: "active" | "inactive";
-  isFounder: boolean;
-  isBetaTester: boolean;
-  hasComplimentaryAccess: boolean;
-  /** Set when the account has complimentary Academy access. */
-  accessType: ComplimentaryAccessType | null;
-};
-
-/** Resolves founder and beta tester complimentary Academy access from auth profile data. */
+/**
+ * Resolves founder (server env allowlist) and beta tester (app_metadata only).
+ * Server-only — never import from client bundles.
+ */
 export function getComplimentaryAccess(args: {
   email: string | null | undefined;
-  metadata?: Record<string, unknown> | null;
+  /** Auth app_metadata only (admin-writable). */
+  appMetadata?: Record<string, unknown> | null;
 }): ComplimentaryAccess {
   const founder = isFounder(args.email);
-  const betaTester = isBetaTester(args.metadata);
+  const betaTester = isBetaTester(args.appMetadata);
 
   if (founder) {
     return {
@@ -56,7 +55,7 @@ export function getComplimentaryAccess(args: {
 
 export function hasComplimentaryAccess(args: {
   email: string | null | undefined;
-  metadata?: Record<string, unknown> | null;
+  appMetadata?: Record<string, unknown> | null;
 }): boolean {
   return getComplimentaryAccess(args).hasComplimentaryAccess;
 }

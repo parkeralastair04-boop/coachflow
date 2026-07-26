@@ -3,7 +3,7 @@ import { FeatureGate } from "@/components/feature-gate";
 import { NotificationSettingsManager } from "@/components/notification-settings-manager";
 
 export const metadata: Metadata = {
-  title: "Notification Settings",
+  title: "Pitch-Side Alerts",
 };
 
 export default function NotificationSettingsPage() {

@@ -18,6 +18,7 @@ import {
   resolveQueryError,
 } from "@/lib/supabase-errors";
 import { cn } from "@/lib/utils";
+import { PanelSkeleton } from "@/components/branded-loading";
 
 type NotificationPreferences = Record<PushNotificationType, boolean>;
 
@@ -253,19 +254,16 @@ export function NotificationSettingsManager() {
 
   if (loading) {
     return (
-      <div className="glass-panel flex items-center gap-3 rounded-2xl p-6 text-sm">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Loading notification settings...
-      </div>
+      <PanelSkeleton />
     );
   }
 
   return (
-    <div className="space-y-10">
+    <div className="page-content-enter space-y-10">
       <FeaturePageHeader
         featureKey="notifications"
-        title="Notification Settings"
-        subtitle="Register this device for native alerts and choose which CoachFlow events should trigger push notifications."
+        title="Pitch-Side Alerts"
+        subtitle="Register this device for bookings, payments, and matchday alerts on the go."
         subtitleClassName="max-w-2xl"
       />
 
@@ -277,22 +275,22 @@ export function NotificationSettingsManager() {
       ) : null}
 
       {error ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
+        <div className="football-panel football-panel-interactive rounded-2xl p-5 text-sm text-red-600 dark:text-red-400">
           {error}
         </div>
       ) : null}
       {success ? (
-        <div className="glass-panel rounded-2xl p-5 text-sm text-accent">
+        <div className="football-panel football-panel-interactive rounded-2xl p-5 text-sm text-accent">
           {success}
         </div>
       ) : null}
 
       {setupTables.length === 0 ? (
       <>
-      <section className="glass-panel rounded-2xl p-6 sm:p-8">
+      <section className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3">
-            <div className="bg-accent/10 ring-accent/20 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
+            <div className="bg-accent/12 ring-accent/25 flex size-11 shrink-0 items-center justify-center rounded-xl ring-1">
               <Smartphone className="text-accent size-5" aria-hidden />
             </div>
             <div>
@@ -324,7 +322,7 @@ export function NotificationSettingsManager() {
         </div>
         {!nativePushSupported ? (
           <p className="text-muted mt-4 text-sm">
-            Open CoachFlow from the iOS or Android Capacitor app to register a
+            Open Awarix from the iOS or Android Capacitor app to register a
             native push token.
           </p>
         ) : null}
@@ -335,10 +333,10 @@ export function NotificationSettingsManager() {
           const template = PUSH_NOTIFICATION_TEMPLATES[type];
           const enabled = preferences[type];
           return (
-            <article key={type} className="glass-panel rounded-2xl p-5 sm:p-6">
+            <article key={type} className="football-panel football-panel-interactive rounded-2xl p-5 sm:p-6">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
-                  <div className="bg-accent/10 ring-accent/20 flex size-10 shrink-0 items-center justify-center rounded-xl ring-1">
+                  <div className="bg-accent/12 ring-accent/25 flex size-10 shrink-0 items-center justify-center rounded-xl ring-1">
                     <BellRing className="text-accent size-5" aria-hidden />
                   </div>
                   <div>

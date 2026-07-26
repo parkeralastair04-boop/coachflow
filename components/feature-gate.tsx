@@ -1,5 +1,5 @@
 import type { FeatureKey } from "@/lib/subscription";
-import { getCurrentSubscription, hasFeatureAccess } from "@/lib/subscription";
+import { getCurrentSubscription, planHasFeature } from "@/lib/subscription";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
 
 type FeatureGateProps = {
@@ -16,10 +16,10 @@ export async function FeatureGate({
   description,
   children,
 }: FeatureGateProps) {
-  const [allowed, subscription] = await Promise.all([
-    hasFeatureAccess(feature),
-    getCurrentSubscription(),
-  ]);
+  const subscription = await getCurrentSubscription();
+  const allowed = subscription
+    ? planHasFeature(subscription.effectivePlan, feature)
+    : false;
 
   if (!allowed) {
     return (

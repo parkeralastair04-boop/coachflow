@@ -1,5 +1,10 @@
 import type { PlanId } from "@/lib/billing";
-import { buildPlanComparisonFromDefinitions, type FeatureKey } from "@/lib/feature-definitions";
+import {
+  FEATURE_CATEGORY_ORDER,
+  buildPlanComparisonFromDefinitions,
+  type FeatureCategory,
+  type FeatureKey,
+} from "@/lib/feature-definitions";
 import { planHasFeature } from "@/lib/subscription";
 
 export type ComparisonRow =
@@ -7,44 +12,124 @@ export type ComparisonRow =
   | { kind: "plans"; label: string; plans: Record<PlanId, boolean> };
 
 export type ComparisonCategory = {
-  name: string;
+  name: FeatureCategory;
   rows: ComparisonRow[];
 };
 
-/** Static rows that are not tied to a single gate feature. */
+/** Ungated or cross-cutting capabilities that still belong on the matrix. */
 const STATIC_COMPARISON_ROWS: ComparisonCategory[] = [
   {
-    name: "Core Platform",
+    name: "Core Coaching",
     rows: [
       {
         kind: "plans",
-        label: "Dashboard",
+        label: "Academy Pulse",
         plans: { starter: true, pro: true, academy: true },
       },
     ],
   },
   {
-    name: "Payments & Billing",
+    name: "Teams & Attendance",
     rows: [
       {
         kind: "plans",
-        label: "Coach Billing Portal",
-        plans: { starter: true, pro: true, academy: true },
-      },
-      {
-        kind: "plans",
-        label: "Stripe Webhooks",
+        label: "Teams & squads",
         plans: { starter: true, pro: true, academy: true },
       },
     ],
   },
   {
-    name: "Communication & Automation",
+    name: "Academy Website",
     rows: [
       {
         kind: "plans",
-        label: "Notification Preferences",
+        label: "Public academy website",
         plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Home, About & Coaches",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Teams, Fixtures & Results",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Camps on the public website",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "News & contact / enquiries",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "SEO-ready public pages",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Website booking page",
+        plans: { starter: false, pro: false, academy: true },
+      },
+    ],
+  },
+  {
+    name: "Parent Experience",
+    rows: [
+      {
+        kind: "plans",
+        label: "Parent / family login",
+        plans: { starter: true, pro: true, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Family training hub",
+        plans: { starter: true, pro: true, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Parent session & attendance view",
+        plans: { starter: true, pro: true, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Parent report access",
+        plans: { starter: false, pro: true, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Parent payments & invoices",
+        plans: { starter: false, pro: false, academy: true },
+      },
+      {
+        kind: "plans",
+        label: "Parent communications",
+        plans: { starter: false, pro: true, academy: true },
+      },
+    ],
+  },
+  {
+    name: "Finance",
+    rows: [
+      {
+        kind: "plans",
+        label: "Awarix billing portal",
+        plans: { starter: true, pro: true, academy: true },
+      },
+    ],
+  },
+  {
+    name: "Support",
+    rows: [
+      {
+        kind: "plans",
+        label: "In-app help & support",
+        plans: { starter: true, pro: true, academy: true },
       },
     ],
   },
@@ -52,9 +137,13 @@ const STATIC_COMPARISON_ROWS: ComparisonCategory[] = [
 
 function mergeComparisonCategories(): ComparisonCategory[] {
   const fromDefinitions = buildPlanComparisonFromDefinitions();
-  const merged = new Map<string, ComparisonRow[]>();
+  const merged = new Map<FeatureCategory, ComparisonRow[]>();
 
-  for (const category of [...fromDefinitions, ...STATIC_COMPARISON_ROWS]) {
+  for (const name of FEATURE_CATEGORY_ORDER) {
+    merged.set(name, []);
+  }
+
+  for (const category of [...STATIC_COMPARISON_ROWS, ...fromDefinitions]) {
     const existing = merged.get(category.name) ?? [];
     const rows = category.rows.map((row) =>
       "featureKey" in row
@@ -64,10 +153,13 @@ function mergeComparisonCategories(): ComparisonCategory[] {
     merged.set(category.name, [...existing, ...rows]);
   }
 
-  return [...merged.entries()].map(([name, rows]) => ({ name, rows }));
+  return FEATURE_CATEGORY_ORDER.map((name) => ({
+    name,
+    rows: merged.get(name) ?? [],
+  })).filter((category) => category.rows.length > 0);
 }
 
-/** Feature matrix for the public pricing page — sourced from `FEATURE_DEFINITIONS`. */
+/** Feature matrix for the public pricing page — sourced from audited definitions. */
 export const PLAN_COMPARISON: ComparisonCategory[] = mergeComparisonCategories();
 
 export function isComparisonRowIncluded(plan: PlanId, row: ComparisonRow): boolean {

@@ -1,6 +1,11 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Check } from "lucide-react";
+import { TrialPricingPerks } from "@/components/trial-pricing-perks";
+import { buttonVariants } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { AppIcon } from "@/components/ui/icon";
+import { TYPE } from "@/lib/ui/tokens";
 import { cn } from "@/lib/utils";
 
 type PricingCardProps = {
@@ -14,6 +19,8 @@ type PricingCardProps = {
   ctaHref?: string;
   ctaLabel?: string;
   cta?: ReactNode;
+  showTrialPerks?: boolean;
+  className?: string;
 };
 
 export function PricingCard({
@@ -25,44 +32,47 @@ export function PricingCard({
   highlighted,
   badge,
   ctaHref = "/signup",
-  ctaLabel = "Start trial",
+  ctaLabel = "Start coaching free",
   cta,
+  showTrialPerks = true,
+  className,
 }: PricingCardProps) {
   return (
-    <div
+    <Card
+      variant="interactive"
       className={cn(
-        "glass-panel relative flex flex-col rounded-2xl p-8",
+        "relative flex h-full flex-col p-8",
         highlighted &&
           "border-accent/40 ring-accent/30 shadow-[0_0_0_1px_rgba(16,185,129,0.2)] ring-2",
+        className,
       )}
     >
-      {badge || highlighted ? (
-        <span
-          className={cn(
-            "mb-4 inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ring-1",
-            highlighted || badge === "Most Popular"
-              ? "bg-accent/15 text-accent ring-accent/30"
-              : "bg-violet-500/10 text-violet-700 ring-violet-500/25 dark:text-violet-300",
-          )}
-        >
-          {badge ?? "Most Popular"}
-        </span>
-      ) : null}
-      <h3 className="text-lg font-semibold">{name}</h3>
-      <p className="text-muted mt-2 text-sm">{description}</p>
+      <div className="min-h-[1.75rem]">
+        {badge || highlighted ? (
+          <span
+            className={cn(
+              "inline-flex w-fit rounded-full px-3 py-1 text-xs font-medium ring-1",
+              highlighted || badge === "Most chosen"
+                ? "bg-accent/15 text-accent ring-accent/30"
+                : "bg-black/[0.04] text-foreground ring-black/[0.08] dark:bg-white/[0.06] dark:ring-white/[0.1]",
+            )}
+          >
+            {badge ?? "Most chosen"}
+          </span>
+        ) : null}
+      </div>
+      <h3 className={cn(TYPE.sectionTitle, "mt-4 text-xl")}>{name}</h3>
+      <p className={cn(TYPE.description, "mt-2 min-h-[2.75rem]")}>{description}</p>
       <p className="mt-6 flex items-baseline gap-1">
         <span className="text-4xl font-semibold tracking-tight">{price}</span>
         <span className="text-muted text-sm">{period}</span>
       </p>
+      {showTrialPerks ? <TrialPricingPerks /> : null}
       <ul className="mt-8 flex flex-1 flex-col gap-3 text-sm">
         {features.map((f) => (
           <li key={f} className="flex gap-3">
-            <Check
-              className="text-accent mt-0.5 size-4 shrink-0"
-              strokeWidth={2.5}
-              aria-hidden
-            />
-            <span>{f}</span>
+            <AppIcon icon={Check} size="sm" className="text-accent mt-0.5" />
+            <span className="leading-snug">{f}</span>
           </li>
         ))}
       </ul>
@@ -71,16 +81,14 @@ export function PricingCard({
       ) : (
         <Link
           href={ctaHref}
-          className={cn(
-            "mt-8 inline-flex h-11 items-center justify-center rounded-full text-center text-sm font-medium transition-opacity",
-            highlighted
-              ? "bg-accent text-white hover:opacity-90"
-              : "bg-foreground text-background hover:opacity-90 dark:bg-white dark:text-black",
-          )}
+          className={buttonVariants({
+            variant: highlighted ? "accent" : "primary",
+            className: "mt-8 w-full",
+          })}
         >
           {ctaLabel}
         </Link>
       )}
-    </div>
+    </Card>
   );
 }

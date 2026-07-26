@@ -1,19 +1,30 @@
 import { NextResponse } from "next/server";
+import { enforceRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
+import { prepareParentPortalInvite } from "@/lib/parent-account-claim";
+import { buildParentPortalCtaHtml, buildParentPortalCtaText } from "@/lib/parent-notifications";
 import { getResendServerClient, resendFromEmail } from "@/lib/resend";
+import { generateReportPdf, getReportPdfFilename } from "@/lib/report-pdf";
 import {
-  getPositionSummary,
   normalizeSecondaryPositions,
   type PlayerPositionOption,
   type PreferredFootOption,
 } from "@/lib/player-profile";
+import {
+  formatReportPlainText,
+  parseReportContent,
+  REPORT_SECTIONS,
+} from "@/lib/structured-report";
 import { getPlayerTeams, getTeamDisplayName, type TeamSummary } from "@/lib/team-management";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasFeatureAccess } from "@/lib/subscription";
 import { getAcademyForUser } from "@/lib/academy";
+import { absoluteSitePath } from "@/lib/site-url";
+import { rejectDemoMutation } from "@/lib/demo/http-guard";
 
 type SendReportBody = {
   playerId?: string;
   report?: string;
+  reportId?: string;
 };
 
 type PlayerEmailRow = {
@@ -37,23 +48,36 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-function reportToHtml(report: string): string {
-  return escapeHtml(report)
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.replaceAll("\n", "<br />"))
-    .map(
-      (paragraph) =>
-        `<p style="margin:0 0 16px;color:#1f2937;line-height:1.65;">${paragraph}</p>`,
-    )
+function structuredReportToHtml(report: string): string {
+  const sections = parseReportContent(report);
+
+  return REPORT_SECTIONS.map(({ key, heading }) => {
+    const value = sections[key].trim();
+    if (!value) return "";
+
+    return `<h3 style="margin:24px 0 8px;font-size:16px;color:#111827;">${escapeHtml(heading)}</h3>
+<p style="margin:0 0 16px;color:#1f2937;line-height:1.65;white-space:pre-wrap;">${escapeHtml(value).replaceAll("\n", "<br />")}</p>`;
+  })
+    .filter(Boolean)
     .join("");
 }
 
-function reportToText(report: string): string {
-  return report.trim();
+function structuredReportToText(report: string): string {
+  return formatReportPlainText(parseReportContent(report));
 }
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit({
+      request,
+      config: RATE_LIMITS.communicationSend,
+      route: "/api/send-report",
+    });
+    if (limited) return limited;
+
+    const demoBlocked = rejectDemoMutation(request, "send a progress report email");
+    if (demoBlocked) return demoBlocked;
+
     const allowed = await hasFeatureAccess("parent_emails");
     if (!allowed) {
       return NextResponse.json(
@@ -65,6 +89,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as SendReportBody;
     const playerId = body.playerId?.trim();
     const report = body.report?.trim();
+    const reportId = body.reportId?.trim();
 
     if (!playerId || !report) {
       return NextResponse.json(
@@ -129,17 +154,67 @@ export async function POST(request: Request) {
     const parentName = safePlayer.parent_name?.trim();
     const greeting = parentName ? `Hi ${escapeHtml(parentName)},` : "Hi,";
     const escapedPlayerName = escapeHtml(safePlayer.player_name);
-    const profileSummary = `${getPositionSummary({
-      primary_position: safePlayer.primary_position,
-      secondary_positions: safePlayer.secondary_positions,
-    })} · ${safePlayer.preferred_foot} foot`;
-    const teamSummary = getPlayerTeams(safePlayer.team_players)
-      .map((team) => getTeamDisplayName(team))
-      .join(", ");
-    const subject = `Progress Report for ${safePlayer.player_name}`;
+    const teamNames = getPlayerTeams(safePlayer.team_players).map((team) =>
+      getTeamDisplayName(team),
+    );
+    const subject = `A new progress report is ready`;
     const academy = await getAcademyForUser(user.id);
-    const academyName = academy?.name ?? "CoachFlow";
+    const academyName = academy?.name ?? "Awarix";
     const primaryColor = academy?.primary_color ?? "#10b981";
+    const reportDate = new Date();
+    const pdfBytes = await generateReportPdf({
+      playerName: safePlayer.player_name,
+      preferredFoot: safePlayer.preferred_foot,
+      primaryPosition: safePlayer.primary_position,
+      secondaryPositions: safePlayer.secondary_positions,
+      teamNames,
+      report,
+      academyName,
+      date: reportDate,
+    });
+    const pdfFilename = getReportPdfFilename(safePlayer.player_name, reportDate);
+
+    // Mark matching saved report(s) as intentionally shared with parents.
+    if (reportId) {
+      await supabase
+        .from("progress_reports")
+        .update({ parent_visible: true })
+        .eq("id", reportId)
+        .eq("coach_id", user.id)
+        .eq("player_id", playerId);
+    } else {
+      await supabase
+        .from("progress_reports")
+        .update({ parent_visible: true })
+        .eq("coach_id", user.id)
+        .eq("player_id", playerId)
+        .eq("report", report);
+    }
+
+    let portalInviteUrl = absoluteSitePath("/login?next=/family");
+    let portalInviteKind: "claim" | "sign_in" = "sign_in";
+    try {
+      const invite = await prepareParentPortalInvite({
+        email: safePlayer.parent_email,
+        playerId,
+        childName: safePlayer.player_name,
+        academyName,
+      });
+      portalInviteUrl = invite.url;
+      portalInviteKind = invite.kind;
+    } catch {
+      // Fall back to sign-in URL.
+    }
+
+    const portalCtaHtml = buildParentPortalCtaHtml({
+      inviteUrl: portalInviteUrl,
+      inviteKind: portalInviteKind,
+      primaryColor,
+    });
+    const portalCtaText = buildParentPortalCtaText({
+      inviteUrl: portalInviteUrl,
+      inviteKind: portalInviteKind,
+    }).join("\n");
 
     const html = `<!doctype html>
 <html>
@@ -151,28 +226,24 @@ export async function POST(request: Request) {
             <tr>
               <td style="padding:28px 32px;background:#0f172a;color:#ffffff;">
                 <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:${primaryColor};">${escapeHtml(academyName)}</div>
-                <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">Progress Report for ${escapedPlayerName}</h1>
+                <h1 style="margin:10px 0 0;font-size:24px;line-height:1.25;">Player progress report for ${escapedPlayerName}</h1>
               </td>
             </tr>
             <tr>
               <td style="padding:32px;">
                 <p style="margin:0 0 16px;color:#111827;line-height:1.65;">${greeting}</p>
                 <p style="margin:0 0 16px;color:#374151;line-height:1.65;">
-                  Here is your latest ${escapeHtml(academyName)} progress report for ${escapedPlayerName}, prepared to keep you updated on recent coaching focus, strengths, and next steps.
+                  Your coach has shared a new progress report.
                 </p>
-                <p style="margin:0 0 16px;color:#6b7280;line-height:1.65;">
-                  Player profile: ${escapeHtml(profileSummary)}
-                </p>
-                ${
-                  teamSummary
-                    ? `<p style="margin:0 0 16px;color:#6b7280;line-height:1.65;">Teams: ${escapeHtml(teamSummary)}</p>`
-                    : ""
-                }
-                <div style="margin:24px 0;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
-                  ${reportToHtml(report)}
+                <div id="report" style="margin:24px 0;padding:20px;border-radius:18px;background:#f9fafb;border:1px solid #e5e7eb;">
+                  ${structuredReportToHtml(report)}
                 </div>
                 <p style="margin:0 0 8px;color:#374151;line-height:1.65;">
-                  Thanks for your continued support.
+                  View report above, or download the attached PDF.
+                </p>
+                ${portalCtaHtml}
+                <p style="margin:0 0 16px;color:#374151;line-height:1.65;">
+                  Questions? Contact your coach.
                 </p>
                 <p style="margin:0;color:#111827;line-height:1.65;font-weight:600;">The ${escapeHtml(academyName)} Team</p>
               </td>
@@ -186,14 +257,15 @@ export async function POST(request: Request) {
 
     const text = `${parentName ? `Hi ${parentName},` : "Hi,"}
 
-Here is your latest ${academyName} progress report for ${safePlayer.player_name}.
+Your coach has shared a new progress report for ${safePlayer.player_name}.
 
-Player profile: ${profileSummary}
-${teamSummary ? `\nTeams: ${teamSummary}` : ""}
+${structuredReportToText(report)}
 
-${reportToText(report)}
+Download the attached PDF copy of this report.
 
-Thanks for your continued support.
+${portalCtaText}
+
+Questions? Contact your coach.
 
 The ${academyName} Team`;
 
@@ -204,6 +276,12 @@ The ${academyName} Team`;
       subject,
       html,
       text,
+      attachments: [
+        {
+          filename: pdfFilename,
+          content: Buffer.from(pdfBytes),
+        },
+      ],
     });
 
     if (error) {
